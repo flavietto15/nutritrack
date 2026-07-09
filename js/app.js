@@ -31,15 +31,21 @@ let searchAbort = null;
 let searchTimer = null;
 
 function loadState() {
+  let s = null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) s = JSON.parse(raw);
   } catch (_) { /* storage corrotto: riparti pulito */ }
-  return { goals: null, profile: null, days: {} };
+  if (!s) s = { goals: null, profile: null, days: {} };
+  if (!s.trainingGoals) s.trainingGoals = null;
+  if (!s.trainingDays) s.trainingDays = {};
+  return s;
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (_) { /* storage pieno o bloccato: l'app continua in memoria */ }
 }
 
 /* ---------- Utility ---------- */
@@ -127,8 +133,17 @@ function dayTotals(key = viewDate) {
   }, { kcal: 0, p: 0, c: 0, f: 0 });
 }
 
+/** Obiettivi attivi per il giorno: allenamento o riposo */
+function activeGoals(key = viewDate) {
+  return (state.trainingDays[key] && state.trainingGoals) || state.goals;
+}
+
+function isTrainingDay(key = viewDate) {
+  return Boolean(state.trainingDays[key] && state.trainingGoals);
+}
+
 function remaining(totals) {
-  const g = state.goals;
+  const g = activeGoals();
   return {
     kcal: g.kcal - totals.kcal,
     p: g.p - totals.p,
@@ -155,7 +170,13 @@ function render() {
 
   const totals = dayTotals();
   const rem = remaining(totals);
-  const g = state.goals;
+  const g = activeGoals();
+
+  // Tipo di giornata
+  const training = isTrainingDay();
+  const dayBtn = $("#dayTypeToggle");
+  dayBtn.textContent = training ? "🏋️ Allenamento" : "🛋️ Riposo";
+  dayBtn.classList.toggle("training", training);
 
   // Anello kcal
   const ring = $("#ringFill");
@@ -181,7 +202,7 @@ function render() {
 }
 
 function renderMeters(totals) {
-  const g = state.goals;
+  const g = activeGoals();
   $("#macroMeters").innerHTML = MACROS.map((m) => {
     const eaten = totals[m.id];
     const goal = g[m.id];
@@ -315,7 +336,7 @@ function renderSuggestions() {
  * che stanno nel budget del pasto corrente.
  */
 function suggestFoods(rem, slot) {
-  const g = state.goals;
+  const g = activeGoals();
   const mealBudget = Math.min(rem.kcal, Math.max(150, g.kcal * MEAL_SHARE[slot]));
 
   // Ripartizione calorica dei macro ancora da assumere
@@ -369,7 +390,7 @@ function suggestFoods(rem, slot) {
 }
 
 function buildTip(rem, slotLabel) {
-  const g = state.goals;
+  const g = activeGoals();
   // Macro con il gap relativo maggiore rispetto all'obiettivo
   const gaps = MACROS.map((m) => ({
     m, gap: g[m.id] > 0 ? Math.max(0, rem[m.id]) / g[m.id] : 0,
@@ -712,26 +733,56 @@ function computeGoals({ sex, age, weight, height, activity, goal }) {
   return { kcal, p, c, f };
 }
 
-function fillCustomGoals(g) {
+/** Giorno di allenamento: +10% kcal rispetto al riposo, tutte da carboidrati */
+function trainingFromBase(g) {
+  const extra = Math.round(g.kcal * 0.10 / 10) * 10;
+  return { kcal: g.kcal + extra, p: g.p, c: g.c + Math.round(extra / 4), f: g.f };
+}
+
+function fillCustomGoals(g, train = state.trainingGoals) {
   $("#gKcal").value = g.kcal;
   $("#gProt").value = g.p;
   $("#gCarb").value = g.c;
   $("#gFat").value = g.f;
+  $("#gTrainEnabled").checked = Boolean(train);
+  if (train) {
+    $("#gtKcal").value = train.kcal;
+    $("#gtProt").value = train.p;
+    $("#gtCarb").value = train.c;
+    $("#gtFat").value = train.f;
+  }
+  syncTrainFields();
   updateGoalsCheck();
 }
 
-function updateGoalsCheck() {
-  const kcal = Number($("#gKcal").value) || 0;
-  const p = Number($("#gProt").value) || 0;
-  const c = Number($("#gCarb").value) || 0;
-  const f = Number($("#gFat").value) || 0;
-  const fromMacros = p * 4 + c * 4 + f * 9;
-  const el = $("#goalsCheck");
-  if (!kcal || !fromMacros) { el.textContent = ""; return; }
-  const diff = fromMacros - kcal;
-  el.textContent = Math.abs(diff) <= 50
+/** Mostra/nasconde i campi allenamento in base alla spunta */
+function syncTrainFields() {
+  const on = $("#gTrainEnabled").checked;
+  $("#trainFields").classList.toggle("hidden", !on);
+  $("#gsecRest").classList.toggle("hidden", !on);
+}
+
+function readMacroFields(prefix) {
+  return {
+    kcal: Number($("#" + prefix + "Kcal").value) || 0,
+    p: Number($("#" + prefix + "Prot").value) || 0,
+    c: Number($("#" + prefix + "Carb").value) || 0,
+    f: Number($("#" + prefix + "Fat").value) || 0,
+  };
+}
+
+function macroCheckText(g) {
+  const fromMacros = g.p * 4 + g.c * 4 + g.f * 9;
+  if (!g.kcal || !fromMacros) return "";
+  const diff = fromMacros - g.kcal;
+  return Math.abs(diff) <= 50
     ? `✓ Coerente: i macro valgono ${fromMacros} kcal.`
     : `⚠️ I macro valgono ${fromMacros} kcal, ${diff > 0 ? "+" : ""}${diff} rispetto alle calorie impostate.`;
+}
+
+function updateGoalsCheck() {
+  $("#goalsCheck").textContent = macroCheckText(readMacroFields("g"));
+  $("#goalsCheckTrain").textContent = macroCheckText(readMacroFields("gt"));
 }
 
 function openGoalsModal() {
@@ -751,22 +802,60 @@ function openGoalsModal() {
 }
 
 function saveGoals() {
-  const g = {
-    kcal: Number($("#gKcal").value),
-    p: Number($("#gProt").value),
-    c: Number($("#gCarb").value),
-    f: Number($("#gFat").value),
-  };
+  const g = readMacroFields("g");
   if (!g.kcal || g.kcal < 800) {
     switchGoalsTab("custom");
     toast("Imposta le calorie (o usa il calcolo automatico)");
     return;
+  }
+  if ($("#gTrainEnabled").checked) {
+    const t = readMacroFields("gt");
+    if (!t.kcal || t.kcal < 800) {
+      switchGoalsTab("custom");
+      toast("Imposta le calorie dei giorni di allenamento");
+      return;
+    }
+    state.trainingGoals = t;
+  } else {
+    state.trainingGoals = null;
   }
   state.goals = g;
   saveState();
   closeModal("goalsModal");
   render();
   toast("Obiettivi salvati 💪");
+}
+
+function toggleDayType() {
+  if (!state.trainingGoals) {
+    openGoalsModal();
+    switchGoalsTab("custom");
+    $("#gTrainEnabled").checked = true;
+    prefillTrainFields();
+    syncTrainFields();
+    toast("Imposta i macro dei giorni di allenamento");
+    return;
+  }
+  if (state.trainingDays[viewDate]) delete state.trainingDays[viewDate];
+  else state.trainingDays[viewDate] = true;
+  saveState();
+  render();
+  toast(state.trainingDays[viewDate]
+    ? "Giorno di allenamento 🏋️ — macro aggiornati"
+    : "Giorno di riposo 🛋️ — macro aggiornati");
+}
+
+/** Se i campi allenamento sono vuoti, proponi riposo +10% (carboidrati) */
+function prefillTrainFields() {
+  if (Number($("#gtKcal").value) > 0) return;
+  const base = readMacroFields("g");
+  if (!base.kcal) return;
+  const t = trainingFromBase(base);
+  $("#gtKcal").value = t.kcal;
+  $("#gtProt").value = t.p;
+  $("#gtCarb").value = t.c;
+  $("#gtFat").value = t.f;
+  updateGoalsCheck();
 }
 
 /* ---------- Tabs ---------- */
@@ -853,13 +942,20 @@ function init() {
       goal: $("#pGoal").value,
     };
     state.profile = profile;
-    fillCustomGoals(computeGoals(profile));
+    const base = computeGoals(profile);
+    const trainOn = $("#gTrainEnabled").checked;
+    fillCustomGoals(base, trainOn ? trainingFromBase(base) : null);
     switchGoalsTab("custom");
     toast("Macro calcolati: controlla e salva");
   });
-  ["gKcal", "gProt", "gCarb", "gFat"].forEach((id) =>
+  ["gKcal", "gProt", "gCarb", "gFat", "gtKcal", "gtProt", "gtCarb", "gtFat"].forEach((id) =>
     $("#" + id).addEventListener("input", updateGoalsCheck)
   );
+  $("#gTrainEnabled").addEventListener("change", () => {
+    if ($("#gTrainEnabled").checked) prefillTrainFields();
+    syncTrainFields();
+  });
+  $("#dayTypeToggle").addEventListener("click", toggleDayType);
   $("#saveGoals").addEventListener("click", saveGoals);
 
   // Chiusura modali

@@ -38,6 +38,10 @@
       </div>
       <div class="hero-stats">
         <div class="hero-stat">
+          <span class="hero-stat-label">Giornata</span>
+          <button class="day-type" id="dayTypeToggle" title="Cambia tipo di giornata">🛋️ Riposo</button>
+        </div>
+        <div class="hero-stat">
           <span class="hero-stat-label">Obiettivo</span>
           <span class="hero-stat-value" id="statGoal">–</span>
         </div>
@@ -215,6 +219,7 @@
       </div>
 
       <div class="tab-panel hidden" id="gpanel-custom">
+        <p class="gsection hidden" id="gsecRest">🛋️ Giorni di riposo</p>
         <label class="field">Calorie giornaliere (kcal)
           <input type="number" id="gKcal" class="input" min="800" max="6000" step="10">
         </label>
@@ -230,6 +235,30 @@
           </label>
         </div>
         <p class="hint" id="goalsCheck"></p>
+
+        <label class="switch-row">
+          <input type="checkbox" id="gTrainEnabled">
+          <span>🏋️ Macro diversi nei giorni di allenamento</span>
+        </label>
+        <div id="trainFields" class="hidden">
+          <p class="gsection">🏋️ Giorni di allenamento</p>
+          <label class="field">Calorie giornaliere (kcal)
+            <input type="number" id="gtKcal" class="input" min="800" max="6000" step="10">
+          </label>
+          <div class="grid-3">
+            <label class="field">Proteine (g)
+              <input type="number" id="gtProt" class="input" min="0" step="1">
+            </label>
+            <label class="field">Carboidrati (g)
+              <input type="number" id="gtCarb" class="input" min="0" step="1">
+            </label>
+            <label class="field">Grassi (g)
+              <input type="number" id="gtFat" class="input" min="0" step="1">
+            </label>
+          </div>
+          <p class="hint" id="goalsCheckTrain"></p>
+          <p class="hint">Poi segna i giorni di allenamento con il pulsante 🛋️/🏋️ in alto nella schermata principale.</p>
+        </div>
       </div>
 
       <button class="btn primary full" id="saveGoals">Salva obiettivi</button>

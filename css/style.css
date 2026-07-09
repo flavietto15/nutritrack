@@ -147,6 +147,22 @@ body {
 .hero-stat-value { font-size: 16px; font-weight: 700; }
 .hero-stat-value.negative { color: var(--danger); }
 
+/* Toggle giorno riposo / allenamento */
+.day-type {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.day-type:hover { background: var(--line); }
+.day-type.training { background: var(--prot); border-color: transparent; color: #fff; }
+.day-type.training:hover { filter: brightness(1.08); background: var(--prot); }
+
 /* ===== Macro meters ===== */
 .meter { margin-bottom: 14px; }
 .meter:last-child { margin-bottom: 0; }
@@ -341,6 +357,19 @@ body {
 .row { display: flex; gap: 8px; align-items: center; }
 .row.center { justify-content: center; }
 .hint { font-size: 12px; color: var(--muted); }
+.gsection { font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 4px 0;
+}
+.switch-row input { width: 16px; height: 16px; accent-color: var(--kcal); }
+#trainFields { display: flex; flex-direction: column; gap: 10px; }
 
 .btn {
   border: 1px solid var(--border);
