@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
+  <title>NutriTrack — Diario calorie e macro</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="brand">🥗 NutriTrack</span>
+      <nav class="date-nav" aria-label="Navigazione data">
+        <button class="icon-btn" id="prevDay" title="Giorno precedente">‹</button>
+        <button class="date-label" id="dateLabel" title="Torna a oggi">Oggi</button>
+        <button class="icon-btn" id="nextDay" title="Giorno successivo">›</button>
+      </nav>
+      <button class="icon-btn" id="openSettings" title="Obiettivi e profilo">⚙</button>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Riepilogo calorie -->
+    <section class="card hero-card" aria-label="Riepilogo calorie">
+      <div class="ring-wrap">
+        <svg id="kcalRing" viewBox="0 0 132 132" width="132" height="132" role="img" aria-label="Progresso calorie">
+          <circle class="ring-track" cx="66" cy="66" r="56"/>
+          <circle class="ring-fill" id="ringFill" cx="66" cy="66" r="56"/>
+        </svg>
+        <div class="ring-center">
+          <span class="ring-value" id="ringValue">0</span>
+          <span class="ring-unit">kcal</span>
+        </div>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <span class="hero-stat-label">Obiettivo</span>
+          <span class="hero-stat-value" id="statGoal">–</span>
+        </div>
+        <div class="hero-stat">
+          <span class="hero-stat-label">Consumate</span>
+          <span class="hero-stat-value" id="statEaten">0</span>
+        </div>
+        <div class="hero-stat">
+          <span class="hero-stat-label">Rimanenti</span>
+          <span class="hero-stat-value" id="statLeft">–</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Macro -->
+    <section class="card" aria-label="Macronutrienti">
+      <h2 class="card-title">Macro di oggi</h2>
+      <div id="macroMeters"></div>
+    </section>
+
+    <!-- Suggerimenti -->
+    <section class="card" aria-label="Suggerimenti">
+      <div class="card-head">
+        <h2 class="card-title">💡 Cosa mangiare adesso</h2>
+        <button class="ghost-btn" id="refreshSuggestions" title="Altri suggerimenti">↻ Altri</button>
+      </div>
+      <p class="tip-line" id="tipLine"></p>
+      <div id="suggestionList"></div>
+    </section>
+
+    <!-- Pasti -->
+    <section id="mealsRoot" aria-label="Pasti della giornata"></section>
+
+  </main>
+
+  <!-- FAB scan -->
+  <button class="fab" id="fabScan" title="Scansiona codice a barre">📷</button>
+
+  <!-- Modal: aggiungi alimento -->
+  <div class="modal-backdrop hidden" id="addModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
+      <div class="modal-head">
+        <h3 id="addModalTitle">Aggiungi alimento</h3>
+        <button class="icon-btn" data-close="addModal">✕</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="search" role="tab">🔍 Cerca</button>
+        <button class="tab" data-tab="barcode" role="tab">📷 Barcode</button>
+        <button class="tab" data-tab="manual" role="tab">✏️ Manuale</button>
+      </div>
+
+      <!-- Tab: cerca -->
+      <div class="tab-panel" id="panel-search">
+        <input type="search" id="searchInput" class="input" placeholder="Cerca un alimento… (es. pollo, yogurt)" autocomplete="off">
+        <div class="results" id="searchResults"></div>
+        <p class="hint" id="searchHint">Database locale + Open Food Facts per i prodotti confezionati.</p>
+      </div>
+
+      <!-- Tab: barcode -->
+      <div class="tab-panel hidden" id="panel-barcode">
+        <div class="scanner-box">
+          <video id="scanVideo" playsinline muted></video>
+          <div class="scan-frame"></div>
+        </div>
+        <p class="hint" id="scanStatus">Inquadra il codice a barre del prodotto.</p>
+        <div class="row">
+          <input type="text" id="barcodeInput" class="input" inputmode="numeric" placeholder="…oppure digita il codice">
+          <button class="btn" id="barcodeLookup">Cerca</button>
+        </div>
+      </div>
+
+      <!-- Tab: manuale -->
+      <div class="tab-panel hidden" id="panel-manual">
+        <label class="field">Nome
+          <input type="text" id="mName" class="input" placeholder="Es. Insalata di farro">
+        </label>
+        <div class="grid-2">
+          <label class="field">kcal / 100 g
+            <input type="number" id="mKcal" class="input" min="0" step="1">
+          </label>
+          <label class="field">Proteine (g)
+            <input type="number" id="mProt" class="input" min="0" step="0.1">
+          </label>
+          <label class="field">Carboidrati (g)
+            <input type="number" id="mCarb" class="input" min="0" step="0.1">
+          </label>
+          <label class="field">Grassi (g)
+            <input type="number" id="mFat" class="input" min="0" step="0.1">
+          </label>
+        </div>
+        <button class="btn primary full" id="manualNext">Continua</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: quantità -->
+  <div class="modal-backdrop hidden" id="amountModal">
+    <div class="modal small" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3 id="amountTitle">Quantità</h3>
+        <button class="icon-btn" data-close="amountModal">✕</button>
+      </div>
+      <p class="amount-sub" id="amountSub"></p>
+      <div class="row center">
+        <button class="step-btn" data-step="-10">−10</button>
+        <input type="number" id="amountGrams" class="input amount-input" min="1" step="1" value="100">
+        <span class="unit">g</span>
+        <button class="step-btn" data-step="10">+10</button>
+      </div>
+      <div class="amount-preview" id="amountPreview"></div>
+      <label class="field">Pasto
+        <select id="amountMeal" class="input">
+          <option value="colazione">☀️ Colazione</option>
+          <option value="pranzo">🍽️ Pranzo</option>
+          <option value="spuntino">🥜 Spuntino</option>
+          <option value="cena">🌙 Cena</option>
+        </select>
+      </label>
+      <div class="row">
+        <button class="btn danger hidden" id="amountDelete">Elimina</button>
+        <button class="btn primary full" id="amountConfirm">Aggiungi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: obiettivi / profilo -->
+  <div class="modal-backdrop hidden" id="goalsModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="goalsTitle">
+      <div class="modal-head">
+        <h3 id="goalsTitle">I tuoi obiettivi</h3>
+        <button class="icon-btn hidden" id="goalsClose" data-close="goalsModal">✕</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-gtab="calc" role="tab">🧮 Calcola</button>
+        <button class="tab" data-gtab="custom" role="tab">🎯 Personalizza</button>
+      </div>
+
+      <div class="tab-panel" id="gpanel-calc">
+        <div class="grid-2">
+          <label class="field">Sesso
+            <select id="pSex" class="input">
+              <option value="m">Uomo</option>
+              <option value="f">Donna</option>
+            </select>
+          </label>
+          <label class="field">Età
+            <input type="number" id="pAge" class="input" min="14" max="99" value="30">
+          </label>
+          <label class="field">Peso (kg)
+            <input type="number" id="pWeight" class="input" min="35" max="250" value="75">
+          </label>
+          <label class="field">Altezza (cm)
+            <input type="number" id="pHeight" class="input" min="130" max="230" value="175">
+          </label>
+        </div>
+        <label class="field">Attività fisica
+          <select id="pActivity" class="input">
+            <option value="1.2">Sedentario (poco o niente sport)</option>
+            <option value="1.375">Leggera (1–3 allenamenti/sett.)</option>
+            <option value="1.55" selected>Moderata (3–5 allenamenti/sett.)</option>
+            <option value="1.725">Intensa (6–7 allenamenti/sett.)</option>
+            <option value="1.9">Molto intensa (lavoro fisico + sport)</option>
+          </select>
+        </label>
+        <label class="field">Obiettivo
+          <select id="pGoal" class="input">
+            <option value="cut">Dimagrimento (−15%)</option>
+            <option value="maintain" selected>Mantenimento</option>
+            <option value="bulk">Massa (+10%)</option>
+          </select>
+        </label>
+        <button class="btn primary full" id="calcGoals">Calcola i miei macro</button>
+      </div>
+
+      <div class="tab-panel hidden" id="gpanel-custom">
+        <label class="field">Calorie giornaliere (kcal)
+          <input type="number" id="gKcal" class="input" min="800" max="6000" step="10">
+        </label>
+        <div class="grid-3">
+          <label class="field">Proteine (g)
+            <input type="number" id="gProt" class="input" min="0" step="1">
+          </label>
+          <label class="field">Carboidrati (g)
+            <input type="number" id="gCarb" class="input" min="0" step="1">
+          </label>
+          <label class="field">Grassi (g)
+            <input type="number" id="gFat" class="input" min="0" step="1">
+          </label>
+        </div>
+        <p class="hint" id="goalsCheck"></p>
+      </div>
+
+      <button class="btn primary full" id="saveGoals">Salva obiettivi</button>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="js/foods.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
