@@ -1163,6 +1163,286 @@ function prefillTrainFields() {
   updateGoalsCheck();
 }
 
+/* ---------- Coach obiettivi ---------- */
+
+const TRAIN_LABEL = {
+  pesi: "pesi", calisthenics: "calisthenics", cardio: "cardio",
+  misto: "misto pesi+cardio", sport: "sport", nessuno: "nessun allenamento",
+};
+
+/** Fattore attività stimato da frequenza, durata e tipo di allenamento */
+function coachActivityFactor(type, sessions, minutes) {
+  if (type === "nessuno" || !sessions) return 1.25;
+  let f = sessions <= 2 ? 1.375 : sessions <= 4 ? 1.5 : sessions <= 6 ? 1.65 : 1.75;
+  if (minutes >= 75 || type === "cardio" || type === "sport") f += 0.05;
+  return Math.min(f, 1.9);
+}
+
+/** Calorie e macro consigliati per obiettivo e allenamento (riposo + allenamento) */
+function coachTargets(input) {
+  const { sex, age, weight, height, bf, goal, type, sessions, minutes } = input;
+  // Katch-McArdle se conosce la massa grassa, altrimenti Mifflin-St Jeor
+  const bmr = bf
+    ? 370 + 21.6 * weight * (1 - bf / 100)
+    : 10 * weight + 6.25 * height - 5 * age + (sex === "m" ? 5 : -161);
+  const tdee = bmr * coachActivityFactor(type, sessions, minutes);
+
+  const kcalMult = { cut: 0.80, maintain: 1.0, bulk: 1.10, recomp: 0.93 }[goal];
+  const kcal = Math.round(tdee * kcalMult / 10) * 10;
+
+  const protPerKg = { cut: 2.0, maintain: 1.6, bulk: 1.8, recomp: 2.2 }[goal];
+  const p = Math.round(weight * protPerKg);
+  const f = Math.round(Math.max(0.7 * weight, kcal * 0.27 / 9));
+  const c = Math.max(0, Math.round((kcal - p * 4 - f * 9) / 4));
+  const rest = { kcal, p, c, f };
+
+  // Split allenamento/riposo: le kcal extra dei giorni duri vanno in carboidrati
+  let train = null;
+  if (sessions >= 2 && type !== "nessuno") {
+    const extra = Math.round(kcal * 0.10 / 10) * 10;
+    train = { kcal: kcal + extra, p, c: c + Math.round(extra / 4), f };
+    if (goal === "cut" || goal === "recomp") {
+      const cutRest = Math.round(kcal * 0.95 / 10) * 10;
+      rest.c = Math.max(0, rest.c - Math.round((kcal - cutRest) / 4));
+      rest.kcal = cutRest;
+    }
+  }
+  return { bmr: Math.round(bmr), tdee: Math.round(tdee), rest, train };
+}
+
+/** Elenco di verifiche ok/warn/bad sul piano attuale rispetto al consigliato */
+function coachChecks(input, targets) {
+  const { weight, goal, type, sessions } = input;
+  const checks = [];
+  const add = (level, text) => checks.push({ level, text });
+  const g = state.goals;
+
+  // Obiettivo calorico attuale vs consigliato
+  if (!g) {
+    add("warn", "Non hai ancora obiettivi salvati: applica quelli consigliati qui sotto.");
+  } else {
+    const diff = g.kcal - targets.rest.kcal;
+    if (goal === "cut" && g.kcal >= targets.tdee) {
+      add("bad", `Con ${g.kcal} kcal non sei in deficit (mantenimento ≈ ${targets.tdee} kcal): così il grasso non scende.`);
+    } else if (goal === "cut" && g.kcal < targets.tdee * 0.7) {
+      add("bad", `Deficit troppo aggressivo (${g.kcal} kcal): rischi di perdere muscolo e mollare. Meglio ≈ ${targets.rest.kcal} kcal.`);
+    } else if (goal === "bulk" && g.kcal <= targets.tdee) {
+      add("warn", `Con ${g.kcal} kcal non sei in surplus (mantenimento ≈ ${targets.tdee} kcal): difficile costruire massa.`);
+    } else if (Math.abs(diff) <= 150) {
+      add("ok", `Calorie in linea con l'obiettivo (${g.kcal} kcal vs ${targets.rest.kcal} consigliate).`);
+    } else {
+      add("warn", `Le tue ${g.kcal} kcal si discostano dal consigliato (${targets.rest.kcal}): valuta di aggiornarle.`);
+    }
+
+    // Proteine
+    const perKg = g.p / weight;
+    const minP = { cut: 1.8, maintain: 1.4, bulk: 1.6, recomp: 2.0 }[goal];
+    if (perKg < minP - 0.3) {
+      add("bad", `Proteine basse (${r1(perKg)} g/kg): per questo obiettivo puntane almeno ${minP} g/kg (≈ ${Math.round(weight * minP)} g).`);
+    } else if (perKg < minP) {
+      add("warn", `Proteine un po' basse (${r1(perKg)} g/kg): meglio ≥ ${minP} g/kg.`);
+    } else {
+      add("ok", `Proteine adeguate (${r1(perKg)} g/kg): ottimo per ${goal === "cut" || goal === "recomp" ? "preservare il muscolo in deficit" : "supportare l'allenamento"}.`);
+    }
+  }
+
+  // Allenamento vs obiettivo
+  if (type === "nessuno" || sessions === 0) {
+    add(goal === "bulk" || goal === "recomp" ? "bad" : "warn",
+      goal === "bulk" || goal === "recomp"
+        ? "Senza allenamento coi sovraccarichi non si costruisce (né si preserva) massa muscolare: parti da 2–3 sedute di pesi a settimana."
+        : "Anche 2–3 allenamenti a settimana aiutano molto: preservano il muscolo e alzano le calorie che puoi mangiare.");
+  } else if ((goal === "bulk" || goal === "recomp") && type === "cardio") {
+    add("warn", "Solo cardio non basta per la massa muscolare: aggiungi 2–3 sedute di pesi o corpo libero, il cardio tienilo come extra.");
+  } else if (goal === "cut" && (type === "pesi" || type === "misto" || type === "calisthenics")) {
+    add("ok", `${sessions} sedute di ${TRAIN_LABEL[type]} in deficit: perfetto per perdere grasso preservando il muscolo.`);
+  } else {
+    add("ok", `${sessions} sedute di ${TRAIN_LABEL[type]} a settimana sono coerenti con l'obiettivo.`);
+  }
+  if (sessions > 6) {
+    add("warn", "Più di 6 sedute a settimana: occhio al recupero, il muscolo cresce quando riposi (e dormi 7–9 ore).");
+  }
+
+  // Tempi realistici verso il peso obiettivo
+  if (input.targetW && state.goals) {
+    const deltaKg = input.targetW - weight;
+    const dailyGap = state.goals.kcal - targets.tdee; // + surplus, − deficit
+    const weeklyKg = dailyGap * 7 / 7700;
+    if (deltaKg < 0 && weeklyKg < 0) {
+      const weeks = Math.ceil(deltaKg / weeklyKg);
+      const rate = Math.abs(weeklyKg) / weight * 100;
+      add(rate > 1 ? "warn" : "ok",
+        `Ritmo stimato: ${r1(Math.abs(weeklyKg))} kg/settimana → ~${weeks} settimane per arrivare a ${input.targetW} kg.` +
+        (rate > 1 ? " È veloce: sopra l'1% del peso a settimana aumenta la perdita di muscolo." : " Ritmo sostenibile."));
+    } else if (deltaKg > 0 && weeklyKg > 0) {
+      const weeks = Math.ceil(deltaKg / weeklyKg);
+      add(weeklyKg > weight * 0.005 ? "warn" : "ok",
+        `Ritmo stimato: +${r1(weeklyKg)} kg/settimana → ~${weeks} settimane per ${input.targetW} kg.` +
+        (weeklyKg > weight * 0.005 ? " Surplus generoso: parte del peso sarà grasso." : ""));
+    } else if (deltaKg !== 0) {
+      add("warn", `Con le calorie attuali non ti muovi verso ${input.targetW} kg: applica i macro consigliati.`);
+    }
+  }
+
+  // Uso del toggle allenamento/riposo
+  if (sessions >= 2 && type !== "nessuno") {
+    const marked = countTrainingDaysLast7();
+    if (!state.trainingGoals) {
+      add("warn", "Ti alleni più volte a settimana: attiva i macro separati per i giorni di allenamento (più carboidrati quando ti alleni).");
+    } else if (marked === 0) {
+      add("warn", `Hai i macro da allenamento configurati ma negli ultimi 7 giorni non hai marcato nessun giorno 🏋️ (dichiari ${sessions} sedute): usa il toggle in alto.`);
+    } else {
+      add("ok", `Negli ultimi 7 giorni hai marcato ${marked} giorni di allenamento: il diario segue le tue sedute.`);
+    }
+  }
+
+  // Aderenza del diario (ultimi 7 giorni con dati)
+  if (state.goals) {
+    const adh = diaryAverages(7);
+    if (adh.days >= 3) {
+      const kcalDev = (adh.kcal - state.goals.kcal) / state.goals.kcal;
+      if (Math.abs(kcalDev) <= 0.1) {
+        add("ok", `Diario: negli ultimi ${adh.days} giorni registrati hai fatto in media ${Math.round(adh.kcal)} kcal, in linea con l'obiettivo.`);
+      } else {
+        add("warn", `Diario: media di ${Math.round(adh.kcal)} kcal negli ultimi ${adh.days} giorni registrati, ${kcalDev > 0 ? "sopra" : "sotto"} l'obiettivo del ${Math.round(Math.abs(kcalDev) * 100)}%.`);
+      }
+      if (adh.p < state.goals.p * 0.8) {
+        add("warn", `Diario: proteine medie ${Math.round(adh.p)} g/giorno, sotto l'obiettivo di ${state.goals.p} g — è il macro da sistemare per primo.`);
+      }
+    }
+  }
+
+  return checks;
+}
+
+function countTrainingDaysLast7() {
+  let n = 0;
+  for (let i = 0; i < 7; i++) if (state.trainingDays[todayKey(-i)]) n++;
+  return n;
+}
+
+function diaryAverages(lastNDays) {
+  let days = 0, kcal = 0, p = 0;
+  for (let i = 0; i < lastNDays; i++) {
+    const key = todayKey(-i);
+    if (!dayEntries(key).length) continue;
+    const t = dayTotals(key);
+    days++; kcal += t.kcal; p += t.p;
+  }
+  return days ? { days, kcal: kcal / days, p: p / days } : { days: 0, kcal: 0, p: 0 };
+}
+
+/** Consigli che collegano nutrizione e allenamento, in base al tipo */
+function coachLinkTips(input) {
+  const { type, goal } = input;
+  const tips = [];
+  if (type !== "nessuno" && input.sessions > 0) {
+    tips.push(type === "cardio" || type === "sport"
+      ? "⏱️ <strong>1–2 ore prima</strong> della seduta: carboidrati facili da digerire (banana, pane con marmellata, gallette) e poca fibra/grassi."
+      : "⏱️ <strong>1–2 ore prima</strong> dei pesi: carboidrati + un po' di proteine (yogurt greco con frutta, pane e bresaola).");
+    tips.push("💪 <strong>Entro un paio d'ore dopo</strong>: proteine (25–40 g) + carboidrati per il recupero — es. pollo con riso, uova e pane, oppure whey con una banana.");
+    tips.push("🍚 Nei <strong>giorni di allenamento</strong> metti più carboidrati (usa il toggle 🏋️), nei giorni di riposo più verdure e grassi buoni a parità di proteine.");
+  }
+  tips.push("🥩 Distribuisci le proteine su 3–4 pasti (~0,3–0,4 g/kg a pasto): l'app te le mostra pasto per pasto.");
+  if (goal === "cut" || goal === "recomp") {
+    tips.push("🥦 In deficit punta su cibi voluminosi e poco calorici (verdure, patate, yogurt greco, carni magre): stessa sazietà, meno kcal.");
+  }
+  if (goal === "bulk") {
+    tips.push("🥜 Se fai fatica a mangiare tutto, usa cibi densi: frutta secca, olio EVO, granola — tante kcal in poco volume.");
+  }
+  tips.push("💧 Bevi ~30–35 ml/kg al giorno, di più nei giorni di allenamento.");
+  return tips;
+}
+
+let coachTargetsCache = null;
+
+function readCoachInput() {
+  return {
+    sex: $("#cSex").value,
+    age: Number($("#cAge").value) || 30,
+    weight: Number($("#cWeight").value) || 75,
+    height: Number($("#cHeight").value) || 175,
+    bf: Number($("#cBf").value) || null,
+    goal: $("#cGoal").value,
+    targetW: Number($("#cTargetW").value) || null,
+    type: $("#cTrainType").value,
+    sessions: Number($("#cSessions").value) || 0,
+    minutes: Number($("#cMinutes").value) || 60,
+  };
+}
+
+function openCoachModal() {
+  const c = state.coach || {};
+  const prof = state.profile || {};
+  $("#cSex").value = c.sex || prof.sex || "m";
+  $("#cAge").value = c.age || prof.age || 30;
+  $("#cWeight").value = c.weight || prof.weight || 75;
+  $("#cHeight").value = c.height || prof.height || 175;
+  $("#cBf").value = c.bf || "";
+  $("#cGoal").value = c.goal || (prof.goal === "cut" || prof.goal === "bulk" ? prof.goal : "maintain");
+  $("#cTargetW").value = c.targetW || "";
+  $("#cTrainType").value = c.type || "pesi";
+  $("#cSessions").value = c.sessions ?? 3;
+  $("#cMinutes").value = c.minutes || 60;
+  $("#coachResults").innerHTML = "";
+  openModal("coachModal");
+}
+
+function runCoach() {
+  const input = readCoachInput();
+  state.coach = input;
+  saveState();
+
+  const targets = coachTargets(input);
+  coachTargetsCache = targets;
+  const checks = coachChecks(input, targets);
+  const tips = coachLinkTips(input);
+
+  const LEVEL = { ok: "✅", warn: "⚠️", bad: "❌" };
+  const trainRow = targets.train ? `
+      <tr><td>🏋️ Allenamento</td><td>${targets.train.kcal}</td><td>${targets.train.p}</td><td>${targets.train.c}</td><td>${targets.train.f}</td></tr>` : "";
+
+  $("#coachResults").innerHTML = `
+    <p class="gsection">📋 Verdetto</p>
+    <p class="hint">Mantenimento stimato: <strong>${targets.tdee} kcal/giorno</strong> (metabolismo base ${targets.bmr} kcal).</p>
+    <div class="coach-checks">
+      ${checks.map((ch) => `
+        <div class="coach-check coach-${ch.level}">
+          <span>${LEVEL[ch.level]}</span>
+          <span>${ch.text}</span>
+        </div>`).join("")}
+    </div>
+
+    <p class="gsection">🎯 Macro consigliati</p>
+    <div class="coach-table-wrap">
+      <table class="coach-table">
+        <thead><tr><th>Giorno</th><th>kcal</th><th>P (g)</th><th>C (g)</th><th>G (g)</th></tr></thead>
+        <tbody>
+          <tr><td>${targets.train ? "🛋️ Riposo" : "Ogni giorno"}</td><td>${targets.rest.kcal}</td><td>${targets.rest.p}</td><td>${targets.rest.c}</td><td>${targets.rest.f}</td></tr>${trainRow}
+        </tbody>
+      </table>
+    </div>
+    <button class="btn primary full" id="coachApply">Applica questi obiettivi</button>
+
+    <p class="gsection">🔗 Nutrizione ↔ allenamento</p>
+    <div class="coach-tips">${tips.map((t) => `<p class="coach-tip">${t}</p>`).join("")}</div>
+    <p class="hint">Stime indicative basate su formule standard (Mifflin-St Jeor / Katch-McArdle):
+      non sostituiscono medico o nutrizionista.</p>`;
+
+  $("#coachApply").addEventListener("click", applyCoachTargets);
+  $("#coachResults").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function applyCoachTargets() {
+  if (!coachTargetsCache) return;
+  state.goals = { ...coachTargetsCache.rest };
+  state.trainingGoals = coachTargetsCache.train ? { ...coachTargetsCache.train } : null;
+  saveState();
+  render();
+  closeModal("coachModal");
+  toast("Obiettivi del coach applicati 🧭");
+}
+
 /* ---------- Tabs ---------- */
 
 function switchAddTab(tab) {
@@ -1267,6 +1547,10 @@ function init() {
   $("#dayTypeToggle").addEventListener("click", toggleDayType);
   $("#saveGoals").addEventListener("click", saveGoals);
 
+  // Coach
+  $("#openCoach").addEventListener("click", openCoachModal);
+  $("#coachRun").addEventListener("click", runCoach);
+
   // Chiusura modali
   $$("[data-close]").forEach((b) =>
     b.addEventListener("click", () => closeModal(b.dataset.close))
@@ -1280,7 +1564,7 @@ function init() {
   );
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    ["addModal", "amountModal", "voiceModal"].forEach(closeModal);
+    ["addModal", "amountModal", "voiceModal", "coachModal"].forEach(closeModal);
     if (state.goals) closeModal("goalsModal");
   });
 

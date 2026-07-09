@@ -72,6 +72,14 @@
       <div id="suggestionList"></div>
     </section>
 
+    <!-- Coach -->
+    <section class="card" aria-label="Coach">
+      <h2 class="card-title">🧭 Coach obiettivi</h2>
+      <p class="tip-line">Dimmi i tuoi dati, l'obiettivo e come ti alleni: ti dico se il tuo piano
+        è quello giusto e come collegare dieta e allenamento.</p>
+      <button class="btn primary full" id="openCoach">Fai il check-up</button>
+    </section>
+
     <!-- Pasti -->
     <section id="mealsRoot" aria-label="Pasti della giornata"></section>
 
@@ -283,6 +291,74 @@
       </div>
 
       <button class="btn primary full" id="saveGoals">Salva obiettivi</button>
+    </div>
+  </div>
+
+  <!-- Modal: coach -->
+  <div class="modal-backdrop hidden" id="coachModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="coachTitle">
+      <div class="modal-head">
+        <h3 id="coachTitle">🧭 Check-up obiettivi</h3>
+        <button class="icon-btn" data-close="coachModal">✕</button>
+      </div>
+
+      <p class="gsection">📏 I tuoi dati</p>
+      <div class="grid-2">
+        <label class="field">Sesso
+          <select id="cSex" class="input">
+            <option value="m">Uomo</option>
+            <option value="f">Donna</option>
+          </select>
+        </label>
+        <label class="field">Età
+          <input type="number" id="cAge" class="input" min="14" max="99" value="30">
+        </label>
+        <label class="field">Peso (kg)
+          <input type="number" id="cWeight" class="input" min="35" max="250" value="75">
+        </label>
+        <label class="field">Altezza (cm)
+          <input type="number" id="cHeight" class="input" min="130" max="230" value="175">
+        </label>
+      </div>
+      <label class="field">Massa grassa % (opzionale, se la conosci)
+        <input type="number" id="cBf" class="input" min="3" max="60" step="0.5" placeholder="es. 18">
+      </label>
+
+      <p class="gsection">🎯 Il tuo obiettivo</p>
+      <label class="field">Cosa vuoi ottenere
+        <select id="cGoal" class="input">
+          <option value="cut">Perdere grasso</option>
+          <option value="maintain">Mantenermi</option>
+          <option value="bulk">Mettere massa muscolare</option>
+          <option value="recomp">Ricomposizione (perdere grasso e tenere il muscolo)</option>
+        </select>
+      </label>
+      <label class="field">Peso obiettivo (kg, opzionale)
+        <input type="number" id="cTargetW" class="input" min="35" max="250" placeholder="es. 70">
+      </label>
+
+      <p class="gsection">🏋️ Come ti alleni</p>
+      <label class="field">Tipo di allenamento
+        <select id="cTrainType" class="input">
+          <option value="pesi">Pesi / palestra</option>
+          <option value="calisthenics">Calisthenics / corpo libero</option>
+          <option value="cardio">Cardio / corsa / bici</option>
+          <option value="misto">Misto (pesi + cardio)</option>
+          <option value="sport">Sport (calcio, tennis, nuoto…)</option>
+          <option value="nessuno">Non mi alleno</option>
+        </select>
+      </label>
+      <div class="grid-2">
+        <label class="field">Allenamenti a settimana
+          <input type="number" id="cSessions" class="input" min="0" max="14" value="3">
+        </label>
+        <label class="field">Durata media (minuti)
+          <input type="number" id="cMinutes" class="input" min="15" max="240" step="15" value="60">
+        </label>
+      </div>
+
+      <button class="btn primary full" id="coachRun">Analizza il mio piano</button>
+      <div id="coachResults"></div>
     </div>
   </div>
 

@@ -310,6 +310,39 @@ body {
 }
 .vp-x:hover { color: var(--danger); }
 
+/* ===== Coach ===== */
+.coach-checks { display: flex; flex-direction: column; gap: 8px; }
+.coach-check {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg);
+  border-left: 3px solid var(--line);
+}
+.coach-check.coach-ok { border-left-color: var(--good); }
+.coach-check.coach-warn { border-left-color: var(--carb); }
+.coach-check.coach-bad { border-left-color: var(--danger); }
+.coach-table-wrap { overflow-x: auto; }
+.coach-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.coach-table th, .coach-table td {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.coach-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.coach-table td:not(:first-child), .coach-table th:not(:first-child) { text-align: right; }
+.coach-tips { display: flex; flex-direction: column; gap: 8px; }
+.coach-tip { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.coach-tip strong { color: var(--ink); }
+
 /* ===== Modali ===== */
 .modal-backdrop {
   position: fixed;
