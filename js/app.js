@@ -107,6 +107,7 @@ function openModal(id) { $("#" + id).classList.remove("hidden"); }
 function closeModal(id) {
   $("#" + id).classList.add("hidden");
   if (id === "addModal") stopScanner();
+  if (id === "voiceModal") stopMic();
 }
 
 /* ---------- Calcoli nutrizionali ---------- */
@@ -641,9 +642,9 @@ async function startScanner() {
   scanning = true;
 
   if ("BarcodeDetector" in window) {
-    const detector = new BarcodeDetector({
-      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"],
-    });
+    let formats = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
+    try { formats = await BarcodeDetector.getSupportedFormats(); } catch (_) {}
+    const detector = new BarcodeDetector({ formats });
     setScanStatus("Inquadra il codice a barre…");
     const loop = async () => {
       if (!scanning) return;
@@ -714,6 +715,310 @@ async function lookupBarcode(code) {
   } catch (err) {
     setScanStatus("Errore di rete: controlla la connessione e riprova.");
   }
+}
+
+/* ---------- Dettatura vocale pasti ---------- */
+
+const NUM_WORDS = {
+  un: 1, uno: 1, una: 1, due: 2, tre: 3, quattro: 4, cinque: 5,
+  sei: 6, sette: 7, otto: 8, nove: 9, dieci: 10, dodici: 12,
+  mezzo: 0.5, mezza: 0.5,
+};
+
+/* Misure casalinghe → grammi (o riferimento a porzione/pezzo del cibo) */
+const MEASURE_WORDS = {
+  cucchiaino: 5, cucchiaini: 5, cucchiaio: 10, cucchiai: 10,
+  bicchiere: 200, bicchieri: 200, tazza: 250, tazze: 250,
+  vasetto: 125, vasetti: 125, lattina: 330, lattine: 330,
+  fetta: "unit30", fette: "unit30",
+  piatto: "portion", piatti: "portion", porzione: "portion", porzioni: "portion",
+  pezzo: "unit", pezzi: "unit",
+};
+
+const MEAL_WORDS = {
+  colazione: "colazione", pranzo: "pranzo", spuntino: "spuntino",
+  merenda: "spuntino", cena: "cena",
+};
+
+const PARSE_STOPWORDS = new Set([
+  "di", "d", "del", "della", "dello", "dei", "degli", "delle", "al", "alla",
+  "allo", "ai", "agli", "alle", "con", "la", "il", "lo", "le", "i", "gli",
+  "in", "a", "da", "ho", "mangiato", "bevuto", "preso", "mi", "sono", "po",
+  "anche", "circa", "tipo", "stamattina", "stasera", "oggi",
+]);
+
+/* Radice grezza per tollerare singolare/plurale (mela/mele, uovo/uova) */
+function stemWord(w) { return w.length > 3 ? w.slice(0, -1) : w; }
+
+let FOOD_INDEX = null;
+function buildFoodIndex() {
+  FOOD_INDEX = FOOD_DB.map((food) => {
+    const words = normalize([food.name, ...(food.alias || [])].join(" "))
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w && !PARSE_STOPWORDS.has(w));
+    return { food, tokens: new Set(words.map(stemWord)) };
+  });
+}
+
+/** Trova l'alimento locale che copre meglio le parole dette */
+function matchFood(words) {
+  if (!FOOD_INDEX) buildFoodIndex();
+  const q = words.map(stemWord);
+  if (!q.length) return null;
+  let best = null;
+  for (const { food, tokens } of FOOD_INDEX) {
+    const hits = q.filter((w) => tokens.has(w)).length;
+    if (!hits) continue;
+    const coverage = hits / q.length;            // quanto del parlato è coperto
+    const precision = hits / tokens.size;        // quanto è specifico il nome
+    const score = coverage + precision * 0.15;
+    if (coverage >= 0.5 && (!best || score > best.score)) best = { food, score };
+  }
+  return best ? best.food : null;
+}
+
+/** "80 grammi di pasta, due uova e una mela" → voci con quantità e pasto */
+function parseFoodText(text) {
+  const items = [];
+  let meal = currentMealSlot();
+  let mealExplicit = false;
+  const segs = normalize(text)
+    .replace(/[.;!\n]/g, ",")
+    .split(/,|\be\b|\bed\b|\bpiu\b|\bpoi\b/);
+
+  for (let seg of segs) {
+    seg = seg.trim();
+    if (!seg) continue;
+
+    // cambio pasto: "a pranzo…", "per cena…"
+    for (const [w, m] of Object.entries(MEAL_WORDS)) {
+      if (new RegExp("\\b" + w + "\\b").test(seg)) {
+        meal = m;
+        seg = seg.replace(new RegExp("\\b(a|per)?\\s*" + w + "\\b"), " ");
+        // "due uova e un caffè a colazione": vale anche per le voci già lette
+        if (!mealExplicit) items.forEach((it) => { it.meal = m; });
+        mealExplicit = true;
+      }
+    }
+
+    // grammi/ml espliciti
+    let grams = null;
+    const gMatch = seg.match(/(\d+[.,]?\d*)\s*(?:g\b|gr\b|grammi\b|grammo\b|ml\b|millilitri\b)/);
+    if (gMatch) { grams = parseFloat(gMatch[1].replace(",", ".")); seg = seg.replace(gMatch[0], " "); }
+    const ettiMatch = seg.match(/([\w\d.,]+)\s*ett[oi]\b/);
+    if (grams == null && ettiMatch) {
+      const n = NUM_WORDS[ettiMatch[1]] ?? parseFloat(ettiMatch[1].replace(",", "."));
+      if (n) { grams = n * 100; seg = seg.replace(ettiMatch[0], " "); }
+    }
+    const kgMatch = seg.match(/([\w\d.,]+)\s*(?:kg\b|chil[oi]\b)/);
+    if (grams == null && kgMatch) {
+      const n = NUM_WORDS[kgMatch[1]] ?? parseFloat(kgMatch[1].replace(",", "."));
+      if (n) { grams = n * 1000; seg = seg.replace(kgMatch[0], " "); }
+    }
+
+    // conteggi ("due", "3") e misure ("cucchiai", "fette", "piatto")
+    let count = null, measure = null;
+    const rest = [];
+    for (const w of seg.split(/[^a-z0-9']+/).filter(Boolean)) {
+      if (MEASURE_WORDS[w] !== undefined) { measure = MEASURE_WORDS[w]; continue; }
+      if (NUM_WORDS[w] !== undefined) { count = NUM_WORDS[w]; continue; }
+      if (/^\d+([.,]\d+)?$/.test(w)) { count = parseFloat(w.replace(",", ".")); continue; }
+      if (!PARSE_STOPWORDS.has(w)) rest.push(w);
+    }
+    if (!rest.length) continue;
+
+    const food = matchFood(rest);
+    items.push({
+      query: rest.join(" "),
+      meal,
+      grams: resolveGrams({ grams, count, measure }, food),
+      food: food ? {
+        name: food.name,
+        emoji: foodEmoji(food),
+        per100: { kcal: food.kcal, p: food.p, c: food.c, f: food.f },
+      } : null,
+    });
+  }
+  return items;
+}
+
+function resolveGrams({ grams, count, measure }, food) {
+  if (grams) return Math.round(grams);
+  const portion = food ? food.portion : 100;
+  const unit = food && food.unit ? food.unit : null;
+  if (measure != null) {
+    const n = count || 1;
+    if (measure === "portion") return Math.round(n * portion);
+    if (measure === "unit") return Math.round(n * (unit || portion));
+    if (measure === "unit30") return Math.round(n * (unit || 30));
+    return Math.round(n * measure);
+  }
+  if (count != null) return Math.round(count * (unit || portion));
+  return portion;
+}
+
+/* --- UI dettatura --- */
+
+let voiceItems = [];
+
+function openVoiceModal() {
+  voiceItems = [];
+  $("#voiceText").value = "";
+  $("#voiceParsed").innerHTML = "";
+  $("#voiceStatus").textContent = "";
+  $("#voiceAddAll").classList.add("hidden");
+  openModal("voiceModal");
+}
+
+function analyzeVoiceText() {
+  const text = $("#voiceText").value.trim();
+  if (!text) { toast("Detta o scrivi cosa hai mangiato"); return; }
+  stopMic();
+  voiceItems = parseFoodText(text);
+  if (!voiceItems.length) {
+    $("#voiceParsed").innerHTML = `<p class="hint">Non ho riconosciuto alimenti: prova a riformulare (es. «100 grammi di riso e una mela»).</p>`;
+    $("#voiceAddAll").classList.add("hidden");
+    return;
+  }
+  renderVoicePreview();
+  lookupMissingOnline();
+}
+
+/** Per le voci non trovate in locale prova Open Food Facts */
+async function lookupMissingOnline() {
+  const pending = voiceItems.filter((it) => !it.food);
+  if (!pending.length) return;
+  await Promise.allSettled(pending.map(async (it) => {
+    try {
+      const results = await searchOFF(it.query);
+      if (results.length && !it.food) {
+        it.food = { name: results[0].name, emoji: "📦", per100: results[0].per100 };
+        if (!it.gramsEdited) it.grams = it.grams || results[0].portion;
+      }
+    } catch (_) { /* offline o CSP: resta "non trovato" */ }
+  }));
+  renderVoicePreview();
+}
+
+function renderVoicePreview() {
+  const el = $("#voiceParsed");
+  el.innerHTML = voiceItems.map((it, i) => {
+    if (!it.food) {
+      return `
+        <div class="vp-row">
+          <span class="vp-emoji">❓</span>
+          <div class="vp-info">
+            <div class="vp-name">${esc(it.query)}</div>
+            <div class="vp-detail vp-miss">non trovato — cerca e aggiungilo a mano</div>
+          </div>
+          <button class="sugg-add" data-vsearch="${i}">Cerca</button>
+          <button class="vp-x" data-vremove="${i}" title="Rimuovi">✕</button>
+        </div>`;
+    }
+    const n = {
+      kcal: it.food.per100.kcal * it.grams / 100,
+      p: it.food.per100.p * it.grams / 100,
+    };
+    const opts = MEALS.map((m) =>
+      `<option value="${m.id}" ${m.id === it.meal ? "selected" : ""}>${m.emoji} ${m.label}</option>`).join("");
+    return `
+      <div class="vp-row">
+        <span class="vp-emoji">${it.food.emoji}</span>
+        <div class="vp-info">
+          <div class="vp-name">${esc(it.food.name)}</div>
+          <div class="vp-detail">${r0(n.kcal)} kcal · P ${r0(n.p)} g</div>
+        </div>
+        <input type="number" class="input vp-grams" data-vgrams="${i}" value="${it.grams}" min="1">
+        <select class="input vp-meal" data-vmeal="${i}">${opts}</select>
+        <button class="vp-x" data-vremove="${i}" title="Rimuovi">✕</button>
+      </div>`;
+  }).join("");
+
+  const found = voiceItems.filter((it) => it.food).length;
+  $("#voiceAddAll").classList.toggle("hidden", !found);
+  $("#voiceAddAll").textContent = `Aggiungi ${found > 1 ? found + " voci" : "al diario"}`;
+
+  $$("[data-vgrams]").forEach((inp) => inp.addEventListener("input", () => {
+    const it = voiceItems[Number(inp.dataset.vgrams)];
+    it.grams = Math.max(1, Number(inp.value) || 1);
+    it.gramsEdited = true;
+    const n = it.food.per100;
+    inp.parentElement.querySelector(".vp-detail").textContent =
+      `${r0(n.kcal * it.grams / 100)} kcal · P ${r0(n.p * it.grams / 100)} g`;
+  }));
+  $$("[data-vmeal]").forEach((sel) => sel.addEventListener("change", () => {
+    voiceItems[Number(sel.dataset.vmeal)].meal = sel.value;
+  }));
+  $$("[data-vremove]").forEach((btn) => btn.addEventListener("click", () => {
+    voiceItems.splice(Number(btn.dataset.vremove), 1);
+    renderVoicePreview();
+  }));
+  $$("[data-vsearch]").forEach((btn) => btn.addEventListener("click", () => {
+    const it = voiceItems[Number(btn.dataset.vsearch)];
+    closeModal("voiceModal");
+    openAddModal(it.meal);
+    $("#searchInput").value = it.query;
+    onSearchInput();
+  }));
+}
+
+function addAllVoiceItems() {
+  const found = voiceItems.filter((it) => it.food);
+  if (!found.length) return;
+  for (const it of found) {
+    addEntry({ meal: it.meal, name: it.food.name, grams: it.grams, per100: it.food.per100 });
+  }
+  closeModal("voiceModal");
+  toast(`${found.length} ${found.length === 1 ? "voce aggiunta" : "voci aggiunte"} al diario 🎤`);
+}
+
+/* --- Riconoscimento vocale (Web Speech API) --- */
+
+let recog = null, recActive = false, voiceFinal = "";
+
+function toggleMic() {
+  if (recActive) { stopMic(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    $("#voiceStatus").textContent = "Voce non supportata da questo browser: scrivi qui sotto.";
+    return;
+  }
+  recog = new SR();
+  recog.lang = "it-IT";
+  recog.continuous = true;
+  recog.interimResults = true;
+  voiceFinal = $("#voiceText").value ? $("#voiceText").value.trim() + ", " : "";
+  recog.onresult = (ev) => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const t = ev.results[i][0].transcript;
+      if (ev.results[i].isFinal) voiceFinal += t + " ";
+      else interim += t;
+    }
+    $("#voiceText").value = (voiceFinal + interim).trim();
+  };
+  recog.onerror = (ev) => {
+    $("#voiceStatus").textContent = ev.error === "not-allowed"
+      ? "Microfono negato: consenti l'accesso o scrivi qui sotto."
+      : "Microfono non disponibile: scrivi qui sotto.";
+  };
+  recog.onend = () => stopMic();
+  try {
+    recog.start();
+    recActive = true;
+    $("#micBtn").textContent = "⏹ Ferma";
+    $("#micBtn").classList.add("recording");
+    $("#voiceStatus").textContent = "Ti ascolto… parla pure.";
+  } catch (_) {
+    $("#voiceStatus").textContent = "Impossibile avviare il microfono: scrivi qui sotto.";
+  }
+}
+
+function stopMic() {
+  if (recog) { try { recog.stop(); } catch (_) {} recog = null; }
+  recActive = false;
+  const btn = $("#micBtn");
+  if (btn) { btn.textContent = "🎤 Parla"; btn.classList.remove("recording"); }
 }
 
 /* ---------- Obiettivi ---------- */
@@ -891,6 +1196,10 @@ function init() {
 
   // Aggiungi
   $("#fabScan").addEventListener("click", () => { openAddModal(); switchAddTab("barcode"); });
+  $("#fabVoice").addEventListener("click", openVoiceModal);
+  $("#micBtn").addEventListener("click", toggleMic);
+  $("#voiceParse").addEventListener("click", analyzeVoiceText);
+  $("#voiceAddAll").addEventListener("click", addAllVoiceItems);
   $$(".tab[data-tab]").forEach((b) =>
     b.addEventListener("click", () => switchAddTab(b.dataset.tab))
   );
@@ -971,7 +1280,7 @@ function init() {
   );
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    ["addModal", "amountModal"].forEach(closeModal);
+    ["addModal", "amountModal", "voiceModal"].forEach(closeModal);
     if (state.goals) closeModal("goalsModal");
   });
 

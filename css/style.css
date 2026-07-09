@@ -280,6 +280,35 @@ body {
   z-index: 30;
 }
 .fab:active { transform: scale(0.95); }
+.fab-voice { bottom: 92px; background: var(--prot); }
+
+/* ===== Dettatura vocale ===== */
+.voice-text { resize: vertical; min-height: 64px; font-family: inherit; }
+#micBtn.recording { background: var(--danger); border-color: transparent; color: #fff; }
+.vp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.vp-emoji { font-size: 18px; flex-shrink: 0; width: 24px; text-align: center; }
+.vp-info { flex: 1; min-width: 0; }
+.vp-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-detail { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.vp-miss { color: var(--danger); }
+.vp-row .vp-grams { width: 60px; padding: 6px 4px; text-align: center; flex-shrink: 0; }
+.vp-row .vp-meal { width: 88px; padding: 6px 2px; font-size: 12px; flex-shrink: 0; }
+.vp-x {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  flex-shrink: 0;
+}
+.vp-x:hover { color: var(--danger); }
 
 /* ===== Modali ===== */
 .modal-backdrop {

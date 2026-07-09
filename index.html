@@ -77,8 +77,29 @@
 
   </main>
 
-  <!-- FAB scan -->
+  <!-- FAB scan + voce -->
+  <button class="fab fab-voice" id="fabVoice" title="Detta cosa hai mangiato">🎤</button>
   <button class="fab" id="fabScan" title="Scansiona codice a barre">📷</button>
+
+  <!-- Modal: dettatura vocale -->
+  <div class="modal-backdrop hidden" id="voiceModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="voiceTitle">
+      <div class="modal-head">
+        <h3 id="voiceTitle">🎤 Racconta cosa hai mangiato</h3>
+        <button class="icon-btn" data-close="voiceModal">✕</button>
+      </div>
+      <p class="hint">Es. «a pranzo 80 grammi di pasta al pomodoro, 150 grammi di petto di pollo e una mela».
+        Capisco quantità (grammi, etti, pezzi, cucchiai…) e pasti; senza indicazioni uso porzioni tipiche e l'orario attuale.</p>
+      <div class="row">
+        <button class="btn" id="micBtn">🎤 Parla</button>
+        <span class="hint" id="voiceStatus"></span>
+      </div>
+      <textarea id="voiceText" class="input voice-text" rows="3" placeholder="…oppure scrivi qui la lista"></textarea>
+      <button class="btn primary full" id="voiceParse">Analizza</button>
+      <div id="voiceParsed"></div>
+      <button class="btn primary full hidden" id="voiceAddAll">Aggiungi tutto al diario</button>
+    </div>
+  </div>
 
   <!-- Modal: aggiungi alimento -->
   <div class="modal-backdrop hidden" id="addModal">
