@@ -736,15 +736,23 @@ const MEASURE_WORDS = {
 };
 
 const MEAL_WORDS = {
-  colazione: "colazione", pranzo: "pranzo", spuntino: "spuntino",
-  merenda: "spuntino", cena: "cena",
+  colazione: "colazione", stamattina: "colazione", mattina: "colazione", stamani: "colazione",
+  pranzo: "pranzo",
+  spuntino: "spuntino", merenda: "spuntino", pomeriggio: "spuntino",
+  cena: "cena", stasera: "cena", sera: "cena", stanotte: "cena",
 };
 
+/* Parole del discorso da ignorare: il resto della frase può essere libero */
 const PARSE_STOPWORDS = new Set([
   "di", "d", "del", "della", "dello", "dei", "degli", "delle", "al", "alla",
-  "allo", "ai", "agli", "alle", "con", "la", "il", "lo", "le", "i", "gli",
-  "in", "a", "da", "ho", "mangiato", "bevuto", "preso", "mi", "sono", "po",
-  "anche", "circa", "tipo", "stamattina", "stasera", "oggi",
+  "allo", "ai", "agli", "alle", "la", "il", "lo", "le", "i", "gli",
+  "in", "a", "da", "ho", "mi", "sono", "po", "anche", "circa", "tipo", "oggi",
+  "mangiato", "mangiata", "mangiati", "mangiate", "mangio", "bevuto", "bevuta",
+  "preso", "presa", "ordinato", "ordinata", "assaggiato", "fatto", "abbiamo",
+  "ristorante", "pizzeria", "bar", "fuori", "casa", "amici", "lavoro",
+  "non", "so", "pero", "però", "valori", "quanto", "quanti", "quante",
+  "esattamente", "davvero", "molto", "buono", "buona", "bello", "che", "cosa",
+  "era", "erano", "credo", "penso", "forse", "magari", "questo", "questa",
 ]);
 
 /* Radice grezza per tollerare singolare/plurale (mela/mele, uovo/uova) */
@@ -783,8 +791,8 @@ function parseFoodText(text) {
   let meal = currentMealSlot();
   let mealExplicit = false;
   const segs = normalize(text)
-    .replace(/[.;!\n]/g, ",")
-    .split(/,|\be\b|\bed\b|\bpiu\b|\bpoi\b/);
+    .replace(/[.;!?\n]/g, ",")
+    .split(/,|\be\b|\bed\b|\bcon\b|\bpiu\b|\bpoi\b|\binsieme\b/);
 
   for (let seg of segs) {
     seg = seg.trim();
@@ -857,6 +865,122 @@ function resolveGrams({ grams, count, measure }, food) {
   return portion;
 }
 
+/* --- Modalità IA (Claude): comprensione del parlato libero --- */
+
+const AI_MODEL = "claude-opus-4-8";
+
+const AI_SYSTEM = `Sei il motore di un diario alimentare italiano. Ricevi la trascrizione
+di un messaggio vocale in cui una persona racconta liberamente cosa ha mangiato o bevuto.
+Estrai SOLO gli alimenti e le bevande effettivamente consumati dalla persona, ignorando
+tutto il resto del discorso (luoghi, persone, commenti, divagazioni).
+Per ogni alimento:
+- stima la porzione in grammi: rispetta le quantità dette dall'utente; altrimenti usa
+  porzioni tipiche italiane o da ristorante (es. uno smash burger ≈ 250 g, una porzione
+  di patatine fritte ≈ 150 g, un piatto di pasta cotta ≈ 300 g);
+- stima i valori nutrizionali medi per 100 g (kcal, proteine, carboidrati, grassi) da
+  fonti standard tipo CREA/USDA; per i piatti composti stima la ricetta media;
+- assegna il pasto usando i riferimenti nel testo ("stasera" → cena, "stamattina" →
+  colazione, "a pranzo" → pranzo); senza riferimenti, deducilo dall'ora attuale indicata.
+Non inventare alimenti non menzionati. Se non ci sono alimenti, restituisci la lista vuota.`;
+
+const AI_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["alimenti"],
+  properties: {
+    alimenti: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["nome", "pasto", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
+        properties: {
+          nome: { type: "string", description: "Nome breve dell'alimento in italiano" },
+          pasto: { type: "string", enum: ["colazione", "pranzo", "spuntino", "cena"] },
+          grammi: { type: "number", description: "Porzione consumata stimata, in grammi" },
+          kcal_100g: { type: "number" },
+          proteine_100g: { type: "number" },
+          carboidrati_100g: { type: "number" },
+          grassi_100g: { type: "number" },
+        },
+      },
+    },
+  },
+};
+
+async function aiParseFoodText(text) {
+  const now = new Date();
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": state.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: 2000,
+      system: AI_SYSTEM,
+      output_config: { effort: "low", format: { type: "json_schema", schema: AI_SCHEMA } },
+      messages: [{
+        role: "user",
+        content: `Ora attuale: ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}.\nTrascrizione: «${text}»`,
+      }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    if (res.status === 401) throw new Error("chiave API non valida");
+    throw new Error(err?.error?.message || "errore " + res.status);
+  }
+  const data = await res.json();
+  if (data.stop_reason === "refusal") throw new Error("richiesta rifiutata");
+  const block = (data.content || []).find((b) => b.type === "text");
+  const parsed = JSON.parse(block.text);
+  return (parsed.alimenti || []).map((a) => ({
+    query: a.nome,
+    meal: MEALS.some((m) => m.id === a.pasto) ? a.pasto : currentMealSlot(),
+    grams: Math.max(1, Math.round(a.grammi)),
+    food: {
+      name: a.nome,
+      emoji: "🤖",
+      per100: {
+        kcal: Math.max(0, a.kcal_100g),
+        p: Math.max(0, a.proteine_100g),
+        c: Math.max(0, a.carboidrati_100g),
+        f: Math.max(0, a.grassi_100g),
+      },
+    },
+  }));
+}
+
+function renderAiBox() {
+  const has = Boolean(state.apiKey);
+  $("#aiKeyRow").classList.toggle("hidden", has);
+  $("#aiRemoveKey").classList.toggle("hidden", !has);
+  $("#aiStatus").innerHTML = has
+    ? "🤖 <strong>Modalità IA attiva</strong>: parla liberamente («stasera ho mangiato uno smash burger al ristorante…») e stimo tutto io, anche i valori dei piatti che non conosco."
+    : '🤖 Vuoi la <strong>modalità IA</strong>? Capisce il parlato libero e stima i valori dei piatti da ristorante. Crea una chiave API su <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> e incollala qui (resta salvata solo sul tuo dispositivo):';
+}
+
+function saveAiKey() {
+  const key = $("#aiKeyInput").value.trim();
+  if (!key) { toast("Incolla prima la chiave API"); return; }
+  state.apiKey = key;
+  saveState();
+  $("#aiKeyInput").value = "";
+  renderAiBox();
+  toast("Modalità IA attivata 🤖");
+}
+
+function removeAiKey() {
+  state.apiKey = null;
+  saveState();
+  renderAiBox();
+  toast("Modalità IA disattivata");
+}
+
 /* --- UI dettatura --- */
 
 let voiceItems = [];
@@ -867,13 +991,32 @@ function openVoiceModal() {
   $("#voiceParsed").innerHTML = "";
   $("#voiceStatus").textContent = "";
   $("#voiceAddAll").classList.add("hidden");
+  renderAiBox();
   openModal("voiceModal");
 }
 
-function analyzeVoiceText() {
+async function analyzeVoiceText() {
   const text = $("#voiceText").value.trim();
   if (!text) { toast("Detta o scrivi cosa hai mangiato"); return; }
   stopMic();
+
+  // Con la chiave API: comprensione IA del parlato libero
+  if (state.apiKey) {
+    $("#voiceParsed").innerHTML = `<p class="hint">🤖 Sto analizzando quello che hai detto…</p>`;
+    $("#voiceAddAll").classList.add("hidden");
+    try {
+      voiceItems = await aiParseFoodText(text);
+      if (!voiceItems.length) {
+        $("#voiceParsed").innerHTML = `<p class="hint">🤖 Non ho trovato alimenti in quello che hai detto.</p>`;
+        return;
+      }
+      renderVoicePreview();
+      return;
+    } catch (err) {
+      toast(`IA non disponibile (${err.message}): uso il riconoscimento base`);
+    }
+  }
+
   voiceItems = parseFoodText(text);
   if (!voiceItems.length) {
     $("#voiceParsed").innerHTML = `<p class="hint">Non ho riconosciuto alimenti: prova a riformulare (es. «100 grammi di riso e una mela»).</p>`;
@@ -1480,6 +1623,8 @@ function init() {
   $("#micBtn").addEventListener("click", toggleMic);
   $("#voiceParse").addEventListener("click", analyzeVoiceText);
   $("#voiceAddAll").addEventListener("click", addAllVoiceItems);
+  $("#aiKeySave").addEventListener("click", saveAiKey);
+  $("#aiRemoveKey").addEventListener("click", removeAiKey);
   $$(".tab[data-tab]").forEach((b) =>
     b.addEventListener("click", () => switchAddTab(b.dataset.tab))
   );

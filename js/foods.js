@@ -194,7 +194,17 @@ const FOOD_DB = [
   { name: "Hamburger completo (panino)", kcal: 250, p: 12.0, c: 25.0, f: 11.0, portion: 250, unit: 250, cat: "piatti", meals: ["pranzo", "cena"] },
   { name: "Kebab",                     kcal: 215, p: 12.0, c: 18.0, f: 10.0, portion: 300, unit: 300, cat: "piatti", meals: ["pranzo", "cena"] },
   { name: "Sushi misto",               kcal: 150, p: 7.0,  c: 26.0, f: 2.5,  portion: 200, alias: ["sushi"], cat: "piatti", meals: ["pranzo", "cena"] },
-  { name: "Patatine fritte",           kcal: 312, p: 3.9,  c: 37.0, f: 16.7, portion: 150, cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Patatine fritte",           kcal: 312, p: 3.9,  c: 37.0, f: 16.7, portion: 150, alias: ["patatine"], cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Smash burger",              kcal: 270, p: 14.0, c: 19.0, f: 15.0, portion: 250, unit: 250, cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Poke bowl",                 kcal: 120, p: 8.0,  c: 14.0, f: 3.5,  portion: 400, alias: ["poke"], cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Burrito",                   kcal: 180, p: 9.0,  c: 20.0, f: 7.0,  portion: 300, unit: 300, cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Tacos",                     kcal: 220, p: 11.0, c: 20.0, f: 11.0, portion: 150, unit: 75, alias: ["taco"], cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Ramen",                     kcal: 90,  p: 5.0,  c: 11.0, f: 2.5,  portion: 450, cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Hot dog",                   kcal: 250, p: 10.0, c: 25.0, f: 12.0, portion: 200, unit: 200, cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Nuggets di pollo",          kcal: 260, p: 14.0, c: 15.0, f: 16.0, portion: 150, unit: 18, alias: ["nuggets"], cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Tagliata di manzo",         kcal: 170, p: 24.0, c: 0.5,  f: 8.0,  portion: 250, alias: ["tagliata"], cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Fritto misto di pesce",     kcal: 220, p: 13.0, c: 15.0, f: 12.0, portion: 250, alias: ["fritto misto"], cat: "piatti", meals: ["pranzo", "cena"] },
+  { name: "Club sandwich",             kcal: 230, p: 12.0, c: 22.0, f: 10.0, portion: 250, unit: 250, cat: "piatti", meals: ["pranzo", "cena"] },
 
   // ---- Dolci e colazione ----
   { name: "Marmellata",                kcal: 240, p: 0.5,  c: 59.0, f: 0.1,  portion: 25,  cat: "dolci", meals: ["colazione"] },
