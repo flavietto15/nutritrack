@@ -320,6 +320,49 @@ body {
 }
 .ai-box a { color: var(--kcal); }
 .ai-box .ghost-btn { align-self: flex-start; padding-left: 0; }
+.vp-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+/* ===== Zona allenamento ===== */
+.wk-row {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.wk-row:hover { border-color: var(--muted); }
+.wk-head { display: flex; align-items: center; gap: 8px; }
+.wk-emoji { font-size: 18px; }
+.wk-title { font-weight: 600; font-size: 14px; flex: 1; }
+.wk-kcal { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.wk-ex {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  padding: 3px 0 0 26px;
+}
+.wk-ex-detail { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wk-note { font-size: 12px; color: var(--muted); font-style: italic; padding: 4px 0 0 26px; }
+.wk-week { margin-top: 4px; }
+.wx-head-hint { font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.wx-row {
+  display: grid;
+  grid-template-columns: 1fr 52px 52px 60px 28px;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.wx-row .input { padding: 8px 6px; font-size: 13px; }
+.wx-row .wx-name { min-width: 0; }
 
 /* ===== Coach ===== */
 .coach-checks { display: flex; flex-direction: column; gap: 8px; }

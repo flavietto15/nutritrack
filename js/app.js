@@ -39,6 +39,7 @@ function loadState() {
   if (!s) s = { goals: null, profile: null, days: {} };
   if (!s.trainingGoals) s.trainingGoals = null;
   if (!s.trainingDays) s.trainingDays = {};
+  if (!s.workouts) s.workouts = {};
   return s;
 }
 
@@ -199,6 +200,7 @@ function render() {
 
   renderMeters(totals);
   renderSuggestions();
+  renderTraining();
   renderMeals();
 }
 
@@ -921,7 +923,8 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
     if (!res.ok) {
       const err = await res.json().catch(() => null);
       const msg = err?.error?.message || "";
-      if (res.status === 400 && /api key/i.test(msg)) throw new Error("chiave Gemini non valida");
+      if (res.status === 403 || (res.status === 400 && /api key/i.test(msg)))
+        throw new Error("chiave Gemini non valida o non abilitata");
       if (res.status === 429) throw new Error("limite gratuito Gemini raggiunto, riprova tra un minuto");
       throw new Error(msg || "errore " + res.status);
     }
@@ -1066,14 +1069,48 @@ function renderAiBox() {
     : '🤖 Vuoi la <strong>modalità IA</strong> (parlato libero + Coach potenziato)? <strong>Gratis</strong>: vai su <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con il tuo account Google, premi "Create API key" e incolla qui la chiave. In alternativa una chiave Anthropic da <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. La chiave resta salvata solo sul tuo dispositivo:';
 }
 
-function saveAiKey() {
-  const key = $("#aiKeyInput").value.trim();
+/** Chiamata minima al provider per verificare subito che la chiave funzioni davvero */
+async function aiTestKey() {
+  try {
+    await aiComplete({
+      system: "Rispondi solo con ok = true.",
+      schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } },
+      blocks: [{ type: "text", text: "test di attivazione" }],
+      maxTokens: 100,
+      effort: "low",
+    });
+  } catch (err) {
+    if (err instanceof TypeError) throw new Error("nessuna connessione a internet o richiesta bloccata dal browser");
+    throw err;
+  }
+}
+
+async function saveAiKey() {
+  // le chiavi non contengono mai spazi o virgolette: via i residui di copia-incolla
+  const key = $("#aiKeyInput").value.replace(/[\s"'«»]/g, "");
   if (!key) { toast("Incolla prima la chiave API"); return; }
+  const btn = $("#aiKeySave");
+  btn.disabled = true;
+  btn.textContent = "Verifico…";
+  $("#aiStatus").innerHTML = "🤖 Sto provando la chiave con una richiesta di test…";
+  const prev = state.apiKey;
   state.apiKey = key;
-  saveState();
-  $("#aiKeyInput").value = "";
-  renderAiBox();
-  toast(`Modalità IA attivata con ${aiProviderLabel()} 🤖`);
+  try {
+    await aiTestKey();
+    saveState();
+    $("#aiKeyInput").value = "";
+    renderAiBox();
+    toast(`Modalità IA attivata con ${aiProviderLabel()} 🤖`);
+  } catch (err) {
+    state.apiKey = prev;
+    $("#aiStatus").innerHTML = `⚠️ <strong>Chiave non attivata</strong> — ${esc(err.message)}.<br>
+      Controlla di aver copiato la chiave intera da
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
+      e riprova; se l'hai appena creata, aspetta un minuto.`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Attiva";
+  }
 }
 
 function removeAiKey() {
@@ -1086,9 +1123,11 @@ function removeAiKey() {
 /* --- UI dettatura --- */
 
 let voiceItems = [];
+let voiceAiError = "";
 
 function openVoiceModal() {
   voiceItems = [];
+  voiceAiError = "";
   $("#voiceText").value = "";
   $("#voiceParsed").innerHTML = "";
   $("#voiceStatus").textContent = "";
@@ -1103,6 +1142,7 @@ async function analyzeVoiceText() {
   stopMic();
 
   // Con la chiave API: comprensione IA del parlato libero
+  voiceAiError = "";
   if (state.apiKey) {
     $("#voiceParsed").innerHTML = `<p class="hint">🤖 Sto analizzando quello che hai detto…</p>`;
     $("#voiceAddAll").classList.add("hidden");
@@ -1115,13 +1155,15 @@ async function analyzeVoiceText() {
       renderVoicePreview();
       return;
     } catch (err) {
-      toast(`IA non disponibile (${err.message}): uso il riconoscimento base`);
+      // l'errore resta visibile nell'anteprima, non solo in un toast che sparisce
+      voiceAiError = err.message;
     }
   }
 
   voiceItems = parseFoodText(text);
   if (!voiceItems.length) {
-    $("#voiceParsed").innerHTML = `<p class="hint">Non ho riconosciuto alimenti: prova a riformulare (es. «100 grammi di riso e una mela»).</p>`;
+    $("#voiceParsed").innerHTML = voiceAiErrorHtml() +
+      `<p class="hint">Non ho riconosciuto alimenti: prova a riformulare (es. «100 grammi di riso e una mela»).</p>`;
     $("#voiceAddAll").classList.add("hidden");
     return;
   }
@@ -1145,9 +1187,15 @@ async function lookupMissingOnline() {
   renderVoicePreview();
 }
 
+function voiceAiErrorHtml() {
+  if (!voiceAiError) return "";
+  return `<p class="vp-error">⚠️ <strong>IA non disponibile</strong> (${esc(voiceAiError)}):
+    questi risultati vengono dal riconoscimento base.</p>`;
+}
+
 function renderVoicePreview() {
   const el = $("#voiceParsed");
-  el.innerHTML = voiceItems.map((it, i) => {
+  el.innerHTML = voiceAiErrorHtml() + voiceItems.map((it, i) => {
     if (!it.food) {
       return `
         <div class="vp-row">
@@ -2247,6 +2295,152 @@ function switchGoalsTab(tab) {
   $("#gpanel-custom").classList.toggle("hidden", tab !== "custom");
 }
 
+/* ---------- Zona allenamento ---------- */
+
+const WORKOUT_TYPES = {
+  pesi: { label: "Pesi / palestra", emoji: "🏋️", met: 5 },
+  calisthenics: { label: "Calisthenics", emoji: "🤸", met: 6 },
+  cardio: { label: "Cardio", emoji: "🏃", met: 8 },
+  misto: { label: "Misto pesi + cardio", emoji: "🔀", met: 6.5 },
+  sport: { label: "Sport", emoji: "⚽", met: 7 },
+};
+
+let editingWorkoutId = null;
+
+function dayWorkouts(key = viewDate) {
+  return state.workouts[key] || [];
+}
+
+/** Stima kcal bruciate: MET del tipo di attività × peso × ore */
+function workoutKcal(w) {
+  const met = (WORKOUT_TYPES[w.type] || WORKOUT_TYPES.pesi).met;
+  const kg = (state.profile && state.profile.weight) || 75;
+  return Math.round(met * kg * (w.minutes / 60));
+}
+
+function workoutMuscleText(w) {
+  return [(w.exercises || []).map((e) => e.name).join(" "), w.note || ""].join(" ");
+}
+
+function renderTraining() {
+  const list = dayWorkouts();
+  const rows = list.length
+    ? list.map((w) => {
+        const t = WORKOUT_TYPES[w.type] || WORKOUT_TYPES.pesi;
+        const ex = (w.exercises || []).map((e) => {
+          const detail = [
+            e.sets && e.reps ? `${e.sets}×${e.reps}` : e.sets ? `${e.sets} serie` : "",
+            e.kg ? `${e.kg} kg` : "",
+          ].filter(Boolean).join(" · ");
+          return `<div class="wk-ex"><span>${esc(e.name)}</span><span class="wk-ex-detail">${detail}</span></div>`;
+        }).join("");
+        return `
+          <div class="wk-row" data-workout="${w.id}" title="Tocca per modificare">
+            <div class="wk-head">
+              <span class="wk-emoji">${t.emoji}</span>
+              <span class="wk-title">${t.label}</span>
+              <span class="wk-kcal">${w.minutes} min · ≈${workoutKcal(w)} kcal</span>
+            </div>
+            ${ex}
+            ${w.note ? `<div class="wk-note">${esc(w.note)}</div>` : ""}
+          </div>`;
+      }).join("")
+    : `<p class="hint">Nessun allenamento registrato ${viewDate === todayKey() ? "oggi" : "in questo giorno"}.</p>`;
+
+  // Recap degli ultimi 7 giorni con i gruppi muscolari coperti
+  let weekCount = 0;
+  const weekTexts = [];
+  for (let i = 0; i < 7; i++) {
+    for (const w of state.workouts[todayKey(-i)] || []) {
+      weekCount++;
+      weekTexts.push(workoutMuscleText(w));
+    }
+  }
+  let weekHtml = "";
+  if (weekCount) {
+    weekHtml = `<p class="hint wk-week">Ultimi 7 giorni: <strong>${weekCount} allenament${weekCount === 1 ? "o" : "i"}</strong>.</p>`;
+    const { covered, missing } = muscleAnalysis(weekTexts.join(" "));
+    if (covered.length) {
+      const advice = missing.length
+        ? "Da aggiungere questa settimana: " + missing.slice(0, 3).map((m) => `${m} (${MUSCLE_SUGGEST[m]})`).join(", ")
+        : "Tutti i gruppi muscolari coperti questa settimana 💪";
+      weekHtml += muscleSectionHtml(covered, missing, advice);
+    }
+  }
+
+  $("#trainingBody").innerHTML = rows + weekHtml;
+  $$(".wk-row").forEach((r) =>
+    r.addEventListener("click", () => openWorkoutModal(r.dataset.workout))
+  );
+}
+
+function addExerciseRow(ex = null) {
+  const div = document.createElement("div");
+  div.className = "wx-row";
+  div.innerHTML = `
+    <input type="text" class="input wx-name" placeholder="Esercizio (es. panca piana)" value="${ex ? esc(ex.name) : ""}">
+    <input type="number" class="input wx-sets" placeholder="serie" min="1" value="${ex && ex.sets ? ex.sets : ""}">
+    <input type="number" class="input wx-reps" placeholder="rip." min="1" value="${ex && ex.reps ? ex.reps : ""}">
+    <input type="number" class="input wx-kg" placeholder="kg" min="0" step="0.5" value="${ex && ex.kg ? ex.kg : ""}">
+    <button class="vp-x wx-x" title="Rimuovi esercizio">✕</button>`;
+  div.querySelector(".wx-x").addEventListener("click", () => div.remove());
+  $("#wExercises").appendChild(div);
+}
+
+function openWorkoutModal(workoutId = null) {
+  editingWorkoutId = workoutId;
+  const w = workoutId ? dayWorkouts().find((x) => x.id === workoutId) : null;
+  $("#workoutTitle").textContent = w ? "🏋️ Modifica allenamento" : "🏋️ Registra allenamento";
+  $("#wType").value = w ? w.type : "pesi";
+  $("#wMinutes").value = w ? w.minutes : 60;
+  $("#wNote").value = (w && w.note) || "";
+  $("#wDelete").classList.toggle("hidden", !w);
+  $("#wExercises").innerHTML = "";
+  const exercises = w && w.exercises && w.exercises.length ? w.exercises : [null];
+  exercises.forEach(addExerciseRow);
+  openModal("workoutModal");
+}
+
+function saveWorkout() {
+  const exercises = $$("#wExercises .wx-row").map((r) => ({
+    name: r.querySelector(".wx-name").value.trim(),
+    sets: Number(r.querySelector(".wx-sets").value) || 0,
+    reps: Number(r.querySelector(".wx-reps").value) || 0,
+    kg: Number(r.querySelector(".wx-kg").value) || 0,
+  })).filter((e) => e.name);
+  const w = {
+    id: editingWorkoutId || uid(),
+    type: $("#wType").value,
+    minutes: Math.min(300, Math.max(5, Number($("#wMinutes").value) || 60)),
+    exercises,
+    note: $("#wNote").value.trim(),
+  };
+  const list = dayWorkouts().filter((x) => x.id !== w.id);
+  list.push(w);
+  state.workouts[viewDate] = list;
+
+  // Con i macro da allenamento impostati, il giorno passa da solo ad "allenamento"
+  let msg = "Allenamento salvato 💪";
+  if (state.trainingGoals && !state.trainingDays[viewDate]) {
+    state.trainingDays[viewDate] = true;
+    msg = "Allenamento salvato 💪 — macro del giorno passati ad allenamento 🏋️";
+  }
+  saveState();
+  closeModal("workoutModal");
+  render();
+  toast(msg);
+}
+
+function deleteWorkout() {
+  const list = dayWorkouts().filter((x) => x.id !== editingWorkoutId);
+  if (list.length) state.workouts[viewDate] = list;
+  else delete state.workouts[viewDate];
+  saveState();
+  closeModal("workoutModal");
+  render();
+  toast("Allenamento eliminato");
+}
+
 /* ---------- Wiring ---------- */
 
 function init() {
@@ -2336,6 +2530,12 @@ function init() {
   $("#dayTypeToggle").addEventListener("click", toggleDayType);
   $("#saveGoals").addEventListener("click", saveGoals);
 
+  // Allenamento
+  $("#openWorkout").addEventListener("click", () => openWorkoutModal());
+  $("#wAddEx").addEventListener("click", () => addExerciseRow());
+  $("#wSave").addEventListener("click", saveWorkout);
+  $("#wDelete").addEventListener("click", deleteWorkout);
+
   // Coach
   $("#openCoach").addEventListener("click", openCoachModal);
   $("#coachRun").addEventListener("click", runCoach);
@@ -2356,7 +2556,7 @@ function init() {
   );
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    ["addModal", "amountModal", "voiceModal", "coachModal"].forEach(closeModal);
+    ["addModal", "amountModal", "voiceModal", "coachModal", "workoutModal"].forEach(closeModal);
     if (state.goals) closeModal("goalsModal");
   });
 
