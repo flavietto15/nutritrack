@@ -365,6 +365,10 @@
           <textarea id="cDayLife" class="input coach-text" rows="3"
             placeholder="Es. lavoro in ufficio seduto 8 ore, cammino 30 minuti al giorno, la sera vado in palestra 3 volte a settimana, nel weekend partita di calcetto…"></textarea>
         </label>
+        <label class="field">La dieta che segui ora (opzionale — file PDF, foto o testo)
+          <input type="file" id="cDietFile" class="input" accept="image/*,.pdf,.txt,.csv,.md">
+          <span class="hint">La leggo per capire i tuoi macro attuali e usarli come base di partenza.</span>
+        </label>
       </div>
 
       <p class="gsection">🏋️ Come ti alleni</p>
@@ -392,16 +396,13 @@
         <textarea id="cTraining" class="input coach-text" rows="2"
           placeholder="Es. lunedì panca e spalle, mercoledì squat e stacchi, venerdì trazioni e curl…"></textarea>
       </label>
-      <label class="field">Plicometria / misure
-        <textarea id="cPliche" class="input coach-text" rows="2"
-          placeholder="Es. plica addome 18 mm, coscia 12 mm, vita 84 cm, bilancia impedenziometrica 19%…"></textarea>
+      <label class="field">Plicometria / report misure (file PDF, foto o testo)
+        <input type="file" id="cPlicheFile" class="input" accept="image/*,.pdf,.txt,.csv,.md">
+        <span class="hint">Es. il report della nutrizionista o la foto della scheda con le pliche.</span>
       </label>
       <label class="field">Altro che il coach dovrebbe sapere
         <textarea id="cNotes" class="input coach-text" rows="2"
-          placeholder="Es. dormo 6 ore, faccio 4000 passi al giorno, spalla infortunata, non mangio pesce…"></textarea>
-      </label>
-      <label class="field">Foto del tuo fisico (analizzata solo con la modalità IA 🤖)
-        <input type="file" id="cPhoto" class="input" accept="image/*">
+          placeholder="Es. dormo 6 ore, la nutrizionista mi ha detto di non scendere sotto le 1800 kcal, spalla infortunata, non mangio pesce…"></textarea>
       </label>
 
       <button class="btn primary full" id="coachRun">Analizza il mio piano</button>

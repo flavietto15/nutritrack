@@ -1579,13 +1579,23 @@ function coachLinkTips(input) {
 /* --- Coach IA: analisi completa con Claude (testo libero + foto) --- */
 
 const AI_COACH_SYSTEM = `Sei un coach italiano esperto di nutrizione sportiva e allenamento.
-Ricevi i dati di una persona (misure, obiettivo, allenamento, testi liberi e a volte una foto
-del fisico) e rispondi con un'analisi onesta, concreta e incoraggiante, dando del tu.
+Ricevi i dati di una persona (misure, obiettivo, allenamento, testi liberi e a volte file
+allegati: report di plicometria e/o la dieta che segue) e rispondi con un'analisi onesta,
+concreta e incoraggiante, dando del tu.
+REGOLA FONDAMENTALE: per OGNI informazione extra fornita (giornata tipo, allenamento nel
+dettaglio, note, ogni file allegato) inserisci in "analisi" almeno un punto che la richiami
+esplicitamente, citando le parole o i numeri della persona, e spiega come ne hai tenuto
+conto nei macro o nei consigli. Nessun dato fornito deve restare senza commento. Se nelle
+note ci sono indicazioni di un professionista (es. "la nutrizionista ha detto di non
+scendere sotto X kcal"), rispettale nei macro e dillo.
 - "verdetto": 2-3 frasi di sintesi: se la strada scelta è quella giusta per l'obiettivo e la
   cosa più importante da sistemare per prima.
-- "analisi": 3-7 punti con livello ok/warn/bad su calorie, proteine, allenamento, recupero e
-  su OGNI dato extra fornito (plicometria, note, giornata tipo, foto). Se c'è una foto usala
-  per stimare con tatto la composizione corporea e i punti su cui lavorare.
+- "analisi": 4-8 punti con livello ok/warn/bad su calorie, proteine, allenamento, recupero e
+  sui dati extra. Se c'è un report di plicometria, leggi i valori e commenta la composizione
+  corporea (usala anche per stimare il metabolismo).
+- "dieta_letta"/"dieta_attuale": se è allegata la dieta attuale, leggila, stima i macro
+  giornalieri medi che quella dieta fornisce (dieta_letta=true) e usali come base di
+  partenza nell'analisi; altrimenti dieta_letta=false e valori a 0.
 - "macro_riposo" e "macro_allenamento": calorie e macro giornalieri consigliati per
   l'obiettivo (kcal, proteine/carboidrati/grassi in grammi). Se non serve distinguere i
   giorni di allenamento, metti usa_macro_allenamento=false e ripeti gli stessi valori.
@@ -1601,6 +1611,7 @@ const AI_COACH_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["verdetto", "analisi", "macro_riposo", "macro_allenamento", "usa_macro_allenamento",
+    "dieta_letta", "dieta_attuale",
     "muscoli_coperti", "muscoli_da_aggiungere", "consiglio_allenamento", "consigli"],
   properties: {
     verdetto: { type: "string" },
@@ -1635,6 +1646,16 @@ const AI_COACH_SCHEMA = {
       },
     },
     usa_macro_allenamento: { type: "boolean" },
+    dieta_letta: { type: "boolean" },
+    dieta_attuale: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kcal", "proteine", "carboidrati", "grassi"],
+      properties: {
+        kcal: { type: "number" }, proteine: { type: "number" },
+        carboidrati: { type: "number" }, grassi: { type: "number" },
+      },
+    },
     muscoli_coperti: { type: "array", items: { type: "string" } },
     muscoli_da_aggiungere: { type: "array", items: { type: "string" } },
     consiglio_allenamento: { type: "string" },
@@ -1659,7 +1680,6 @@ function coachPromptText(input) {
   ];
   if (input.dayLife) lines.push(`La mia giornata tipo: «${input.dayLife}»`);
   if (input.training) lines.push(`Il mio allenamento nel dettaglio: «${input.training}»`);
-  if (input.pliche) lines.push(`Plicometria/misure: «${input.pliche}»`);
   if (input.notes) lines.push(`Altre note: «${input.notes}»`);
   if (input.mode !== "calc" && state.goals) {
     lines.push(`Macro attuali impostati nell'app — riposo: ${state.goals.kcal} kcal, P ${state.goals.p} g, C ${state.goals.c} g, G ${state.goals.f} g` +
@@ -1672,15 +1692,26 @@ function coachPromptText(input) {
   return lines.join("\n");
 }
 
-async function aiCoachAnalyze(input, photo) {
+async function aiCoachAnalyze(input, files) {
   const content = [];
-  if (photo) {
-    content.push({
-      type: "image",
-      source: { type: "base64", media_type: photo.media_type, data: photo.data },
-    });
-  }
-  content.push({ type: "text", text: coachPromptText(input) + (photo ? "\nIn allegato la foto del mio fisico." : "") });
+  let extra = "";
+  const attach = (file, label) => {
+    if (!file) return;
+    if (file.kind === "image") {
+      content.push({ type: "image",
+        source: { type: "base64", media_type: file.media_type, data: file.data } });
+      extra += `\nIn allegato (immagine) ${label}: «${file.name}».`;
+    } else if (file.kind === "pdf") {
+      content.push({ type: "document",
+        source: { type: "base64", media_type: file.media_type, data: file.data } });
+      extra += `\nIn allegato (PDF) ${label}: «${file.name}».`;
+    } else if (file.kind === "text") {
+      extra += `\n--- ${label} («${file.name}») ---\n${file.text}\n---`;
+    }
+  };
+  attach(files.pliche, "il report della mia plicometria/misure");
+  attach(files.diet, "la dieta che seguo attualmente");
+  content.push({ type: "text", text: coachPromptText(input) + extra });
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -1735,7 +1766,6 @@ function readCoachInput() {
     minutes: Number($("#cMinutes").value) || 60,
     dayLife: $("#cDayLife").value.trim(),
     training: $("#cTraining").value.trim(),
-    pliche: $("#cPliche").value.trim(),
     notes: $("#cNotes").value.trim(),
   };
 }
@@ -1755,35 +1785,97 @@ function openCoachModal() {
   $("#cMinutes").value = c.minutes || 60;
   $("#cDayLife").value = c.dayLife || "";
   $("#cTraining").value = c.training || "";
-  $("#cPliche").value = c.pliche || "";
   $("#cNotes").value = c.notes || "";
-  $("#cPhoto").value = "";
+  $("#cPlicheFile").value = "";
+  $("#cDietFile").value = "";
   setCoachMode(c.mode || "check");
   $("#coachResults").innerHTML = "";
   openModal("coachModal");
 }
 
-/** Legge la foto scelta e la ridimensiona (max 1024 px, JPEG) per l'invio all'IA */
-function readCoachPhoto() {
-  const file = $("#cPhoto").files[0];
+/** Legge un file allegato al coach: foto (ridimensionata), PDF (base64) o testo */
+function readCoachFile(sel) {
+  const file = $(sel).files[0];
   if (!file) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(img.width * scale));
-      canvas.height = Math.max(1, Math.round(img.height * scale));
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      try {
-        resolve({ media_type: "image/jpeg", data: canvas.toDataURL("image/jpeg", 0.82).split(",")[1] });
-      } catch { resolve(null); }
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-    img.src = url;
-  });
+
+  if (file.type.startsWith("image/")) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        try {
+          resolve({ kind: "image", name: file.name, media_type: "image/jpeg",
+            data: canvas.toDataURL("image/jpeg", 0.82).split(",")[1] });
+        } catch { resolve(null); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }
+
+  if (file.type === "application/pdf") {
+    return new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve({ kind: "pdf", name: file.name,
+        media_type: "application/pdf", data: String(r.result).split(",")[1] });
+      r.onerror = () => resolve(null);
+      r.readAsDataURL(file);
+    });
+  }
+
+  // Qualsiasi altro formato lo trattiamo come testo
+  return file.text()
+    .then((text) => ({ kind: "text", name: file.name, text: text.slice(0, 8000) }))
+    .catch(() => null);
+}
+
+/* --- Lettura locale dei dati extra: note e file devono incidere sui calcoli --- */
+
+/** Estrae vincoli e segnali dalle note libere (sonno, infortuni, soglia kcal, esclusioni) */
+function parseCoachNotes(text) {
+  const out = { sleep: null, injury: null, kcalFloor: null, exclusions: [] };
+  if (!text) return out;
+  const t = text.toLowerCase();
+  const sm = t.match(/dorm\w*[^\d]{0,12}(\d{1,2})(?:[-–](\d{1,2}))?\s*or[ae]/);
+  if (sm) out.sleep = Number(sm[1]);
+  const fm = t.match(/non\s+(?:scendere|andare)\s+sotto\s+(?:le|i|a)?\s*(\d{3,4})/) ||
+             t.match(/(?:almeno|minimo)\s+(\d{3,4})\s*(?:kcal|calorie)/);
+  if (fm) out.kcalFloor = Number(fm[1]);
+  const im = t.match(/[\wàèéìòù]+\s+infortunat\w+/) ||
+             t.match(/infortun\w+\s+(?:al|alla|ai|alle)?\s*[\wàèéìòù]*/) ||
+             t.match(/(?:dolore|male|tendinite|ernia)\s+(?:al|alla|ai|alle)\s+[\wàèéìòù]+/);
+  if (im) out.injury = im[0].trim();
+  const em = t.match(/non\s+mangio\s+(?:la |il |le |i |lo |l')?([\wàèéìòù]+(?:\s+[\wàèéìòù]+)?)/);
+  if (em) out.exclusions.push(em[1].trim());
+  if (/vegetarian/.test(t)) out.exclusions.push("carne e pesce (vegetariano)");
+  else if (/vegan/.test(t)) out.exclusions.push("prodotti animali (vegano)");
+  return out;
+}
+
+/** Cerca la massa grassa in un report di plicometria in formato testo */
+function parsePlicheText(text) {
+  const t = (text || "").toLowerCase();
+  const m = t.match(/(?:massa grassa|grasso corporeo|body ?fat|bf)\D{0,15}?(\d{1,2}(?:[.,]\d)?)\s*%/) ||
+            t.match(/(\d{1,2}(?:[.,]\d)?)\s*%\s*(?:di\s+)?(?:massa grassa|grasso|body ?fat|bf)/);
+  return m ? Number(m[1].replace(",", ".")) : null;
+}
+
+/** Cerca i totali giornalieri (kcal e macro) in una dieta in formato testo */
+function parseDietText(text) {
+  const t = (text || "").toLowerCase();
+  const num = (re) => { const m = t.match(re); return m ? Number(m[1].replace(",", ".")) : null; };
+  return {
+    kcal: num(/(\d{3,4})\s*(?:kcal|calorie)/),
+    p: num(/prot\w*\D{0,12}?(\d{2,3})(?:[.,]\d)?\s*g/),
+    c: num(/carbo\w*\D{0,12}?(\d{2,3})(?:[.,]\d)?\s*g/),
+    f: num(/(?:grassi|lipidi)\D{0,12}?(\d{2,3})(?:[.,]\d)?\s*g/),
+  };
 }
 
 async function runCoach() {
@@ -1792,28 +1884,107 @@ async function runCoach() {
   saveState();
 
   const btn = $("#coachRun");
-  if (state.apiKey) {
-    btn.disabled = true;
-    btn.textContent = "🤖 Il coach sta analizzando…";
-    try {
-      const photo = await readCoachPhoto();
-      const ai = await aiCoachAnalyze(input, photo);
-      renderCoachResults(input, aiCoachToView(input, ai));
-      return;
-    } catch (e) {
-      toast("IA non disponibile (" + e.message + "): uso l'analisi locale");
-    } finally {
-      btn.disabled = false;
-      setCoachMode(input.mode);
+  btn.disabled = true;
+  btn.textContent = state.apiKey ? "🤖 Il coach sta analizzando…" : "📖 Sto leggendo i tuoi dati…";
+  try {
+    const files = {
+      pliche: await readCoachFile("#cPlicheFile"),
+      diet: await readCoachFile("#cDietFile"),
+    };
+    if (state.apiKey) {
+      try {
+        const ai = await aiCoachAnalyze(input, files);
+        renderCoachResults(input, aiCoachToView(input, ai, files));
+        return;
+      } catch (e) {
+        toast("IA non disponibile (" + e.message + "): uso l'analisi locale");
+      }
     }
+    renderCoachResults(input, localCoachView(input, files));
+  } finally {
+    btn.disabled = false;
+    setCoachMode(input.mode);
   }
-  renderCoachResults(input, localCoachView(input));
 }
 
 /** Analisi locale: formule + euristiche (nessuna chiave API necessaria) */
-function localCoachView(input) {
+function localCoachView(input, files) {
+  files = files || {};
+  const extras = [];
+  const needAi = [];
+
+  // Plicometria da file: se è testo provo a leggere la massa grassa e la uso nei calcoli
+  if (files.pliche) {
+    const bfFile = files.pliche.kind === "text" ? parsePlicheText(files.pliche.text) : null;
+    if (bfFile && !input.bf) {
+      input = { ...input, bf: bfFile };
+      extras.push({ level: "ok", text: `📎 Dal file della plicometria («${files.pliche.name}») ho letto massa grassa ≈ <strong>${bfFile}%</strong>: l'ho usata per calcolare il tuo metabolismo con la formula più precisa (Katch-McArdle).` });
+    } else if (bfFile) {
+      extras.push({ level: "ok", text: `📎 Nel file della plicometria («${files.pliche.name}») trovo massa grassa ≈ ${bfFile}%: nei calcoli uso il ${input.bf}% che hai indicato tu nel campo apposito.` });
+    } else {
+      needAi.push(`il file della plicometria («${files.pliche.name}»)`);
+    }
+  }
+
+  // Vincoli e segnali dalle note libere
+  const cons = parseCoachNotes(input.notes);
   const targets = coachTargets(input);
-  const checks = coachChecks(input, targets);
+
+  if (cons.kcalFloor) {
+    if (targets.rest.kcal < cons.kcalFloor) {
+      const addK = cons.kcalFloor - targets.rest.kcal;
+      targets.rest.kcal = cons.kcalFloor;
+      targets.rest.c += Math.round(addK / 4);
+      if (targets.train && targets.train.kcal < cons.kcalFloor) {
+        targets.train.c += Math.round((cons.kcalFloor - targets.train.kcal) / 4);
+        targets.train.kcal = cons.kcalFloor;
+      }
+      extras.push({ level: "ok", text: `📎 Nelle note scrivi di <strong>non scendere sotto le ${cons.kcalFloor} kcal</strong>: il mio calcolo dava meno, quindi ho alzato i macro consigliati a quella soglia (rispetta l'indicazione che hai ricevuto).` });
+    } else {
+      extras.push({ level: "ok", text: `📎 Ho letto la soglia minima di ${cons.kcalFloor} kcal indicata nelle note: i macro consigliati (${targets.rest.kcal} kcal) la rispettano già.` });
+    }
+  }
+  if (cons.sleep !== null) {
+    extras.push(cons.sleep < 7
+      ? { level: "warn", text: `📎 Scrivi che dormi ${cons.sleep} ore: è poco. Il recupero (muscolo e fame) passa dal sonno — puntare a 7–9 ore vale quanto sistemare i macro.` }
+      : { level: "ok", text: `📎 Dormi ${cons.sleep} ore: recupero a posto, ottima base per l'obiettivo.` });
+  }
+  if (cons.injury) {
+    extras.push({ level: "warn", text: `📎 Ho letto «${cons.injury}»: adatta gli esercizi per non caricare la zona e, se il dolore persiste, fatti seguire da un professionista. Nel frattempo allena il resto del corpo normalmente.` });
+  }
+  if (cons.exclusions.length) {
+    extras.push({ level: "ok", text: `📎 Non mangi ${cons.exclusions.join(", ")}: nessun problema per i macro, copri le proteine con le alternative (uova, latticini, legumi, carne o pesce a seconda di cosa mangi).` });
+  }
+  if (input.notes && !cons.kcalFloor && cons.sleep === null && !cons.injury && !cons.exclusions.length) {
+    needAi.push("le tue note");
+  }
+
+  // Dieta attuale da file (modalità calcolo): la uso come base di partenza
+  let baseline = null;
+  if (files.diet) {
+    const d = files.diet.kind === "text" ? parseDietText(files.diet.text) : null;
+    if (d && d.kcal) {
+      baseline = { kcal: d.kcal, p: d.p, c: d.c, f: d.f };
+      const diff = targets.rest.kcal - d.kcal;
+      extras.push({
+        level: Math.abs(diff) <= 150 ? "ok" : "warn",
+        text: `📎 Dalla dieta che mi hai mandato («${files.diet.name}») leggo circa <strong>${d.kcal} kcal</strong>${d.p ? `, ${d.p} g di proteine` : ""}: ` +
+          (Math.abs(diff) <= 150
+            ? "sei già molto vicino ai macro consigliati, ti basta ritoccare poco."
+            : diff > 0
+              ? `per il tuo obiettivo servono circa ${diff} kcal in più al giorno rispetto a quella base.`
+              : `per il tuo obiettivo servono circa ${-diff} kcal in meno al giorno rispetto a quella base.`),
+      });
+    } else {
+      needAi.push(`il file della dieta («${files.diet.name}»)`);
+    }
+  }
+
+  if (needAi.length) {
+    extras.push({ level: "warn", text: `Per leggere ${needAi.join(" e ")} in dettaglio (foto/PDF o testi complessi) serve la modalità IA 🤖: attivala con la chiave API nella dettatura vocale e rilancio l'analisi completa.` });
+  }
+
+  const checks = [...extras, ...coachChecks(input, targets)];
   const tips = coachLinkTips(input);
 
   let muscles = null;
@@ -1828,13 +1999,6 @@ function localCoachView(input) {
     }
   }
 
-  if ((input.pliche || input.notes) && !state.apiKey) {
-    checks.push({
-      level: "warn",
-      text: "Hai inserito dati extra (plicometria/note): con la modalità IA 🤖 attiva (chiave API nella dettatura vocale) il coach li legge e li usa nell'analisi.",
-    });
-  }
-
   return {
     badge: null,
     intro: `Mantenimento stimato: <strong>${targets.tdee} kcal/giorno</strong> (metabolismo base ${targets.bmr} kcal).`,
@@ -1842,6 +2006,7 @@ function localCoachView(input) {
     checks,
     rest: targets.rest,
     train: targets.train,
+    baseline,
     muscles,
     tips,
     footer: "Stime indicative basate su formule standard (Mifflin-St Jeor / Katch-McArdle): non sostituiscono medico o nutrizionista.",
@@ -1849,7 +2014,7 @@ function localCoachView(input) {
 }
 
 /** Converte la risposta dell'IA nella stessa struttura usata dal render */
-function aiCoachToView(input, ai) {
+function aiCoachToView(input, ai, files) {
   const toMacro = (m) => ({
     kcal: Math.round(m.kcal), p: Math.round(m.proteine),
     c: Math.round(m.carboidrati), f: Math.round(m.grassi),
@@ -1864,13 +2029,15 @@ function aiCoachToView(input, ai) {
       advice: ai.consiglio_allenamento || "",
     };
   }
+  const nFiles = [files?.pliche, files?.diet].filter(Boolean).length;
   return {
-    badge: "🤖 Analisi IA personalizzata" + ($("#cPhoto").files[0] ? " (foto inclusa)" : ""),
+    badge: "🤖 Analisi IA personalizzata" + (nFiles ? ` (${nFiles === 1 ? "file letto" : "file letti"})` : ""),
     intro: null,
     verdict: ai.verdetto,
     checks: ai.analisi.map((a) => ({ level: a.livello, text: a.testo })),
     rest,
     train,
+    baseline: ai.dieta_letta ? toMacro(ai.dieta_attuale) : null,
     muscles,
     tips: ai.consigli,
     footer: "Analisi generata dall'IA sui dati che hai fornito: non sostituisce medico o nutrizionista.",
@@ -1883,12 +2050,16 @@ function renderCoachResults(input, view) {
   const trainRow = view.train ? `
       <tr><td>🏋️ Allenamento</td><td>${view.train.kcal}</td><td>${view.train.p}</td><td>${view.train.c}</td><td>${view.train.f}</td></tr>` : "";
 
+  const nn = (v) => (v || v === 0 ? v : "—");
+  const baselineRow = view.baseline ? `
+      <tr><td>📄 La tua dieta oggi</td><td>${nn(view.baseline.kcal)}</td><td>${nn(view.baseline.p)}</td><td>${nn(view.baseline.c)}</td><td>${nn(view.baseline.f)}</td></tr>` : "";
+
   const macroTable = `
     <p class="gsection">${input.mode === "calc" ? "🧮 I tuoi macro per l'obiettivo" : "🎯 Macro consigliati"}</p>
     <div class="coach-table-wrap">
       <table class="coach-table">
         <thead><tr><th>Giorno</th><th>kcal</th><th>P (g)</th><th>C (g)</th><th>G (g)</th></tr></thead>
-        <tbody>
+        <tbody>${baselineRow}
           <tr><td>${view.train ? "🛋️ Riposo" : "Ogni giorno"}</td><td>${view.rest.kcal}</td><td>${view.rest.p}</td><td>${view.rest.c}</td><td>${view.rest.f}</td></tr>${trainRow}
         </tbody>
       </table>
