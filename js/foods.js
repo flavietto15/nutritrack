@@ -213,7 +213,7 @@ const FOOD_DB = [
   { name: "Biscotti secchi",           kcal: 416, p: 7.0,  c: 80.0, f: 8.0,  portion: 30,  unit: 8, alias: ["biscotti"], cat: "dolci", meals: ["colazione", "spuntino"] },
   { name: "Fette biscottate integrali",kcal: 380, p: 12.0, c: 70.0, f: 6.0,  portion: 30,  unit: 10, alias: ["fette biscottate"], cat: "pane", meals: ["colazione"] },
   { name: "Crackers",                  kcal: 428, p: 9.5,  c: 68.0, f: 13.0, portion: 25,  unit: 8, alias: ["cracker"], cat: "pane", meals: ["spuntino"] },
-  { name: "Cornetto",                  kcal: 410, p: 7.5,  c: 47.0, f: 21.0, portion: 60,  unit: 60, alias: ["brioche", "croissant"], cat: "dolci", meals: ["colazione"] },
+  { name: "Cornetto",                  kcal: 410, p: 7.5,  c: 47.0, f: 21.0, portion: 60,  unit: 60, alias: ["brioche", "croissant", "fagottino al cioccolato", "saccottino"], cat: "dolci", meals: ["colazione"] },
   { name: "Crema alle nocciole",       kcal: 539, p: 6.0,  c: 57.0, f: 31.0, portion: 15,  alias: ["nutella"], cat: "dolci", meals: ["colazione"] },
   { name: "Cioccolato fondente 85%",   kcal: 584, p: 9.0,  c: 24.0, f: 46.0, portion: 20,  alias: ["cioccolato fondente"], cat: "dolci", meals: ["spuntino"] },
   { name: "Cioccolato al latte",       kcal: 545, p: 7.0,  c: 57.0, f: 32.0, portion: 20,  alias: ["cioccolato"], cat: "dolci", meals: ["spuntino"] },

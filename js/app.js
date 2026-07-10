@@ -824,13 +824,14 @@ function parseFoodText(text) {
       if (n) { grams = n * 1000; seg = seg.replace(kgMatch[0], " "); }
     }
 
-    // conteggi ("due", "3") e misure ("cucchiai", "fette", "piatto")
-    let count = null, measure = null;
+    // conteggi ("due", "3"), misure ("cucchiai", "fette", "piatto") e formati ("mini")
+    let count = null, measure = null, mini = false;
     const rest = [];
     for (const w of seg.split(/[^a-z0-9']+/).filter(Boolean)) {
       if (MEASURE_WORDS[w] !== undefined) { measure = MEASURE_WORDS[w]; continue; }
       if (NUM_WORDS[w] !== undefined) { count = NUM_WORDS[w]; continue; }
       if (/^\d+([.,]\d+)?$/.test(w)) { count = parseFloat(w.replace(",", ".")); continue; }
+      if (w === "mini" || w === "mignon" || /^piccol[oaie]?$/.test(w)) { mini = true; continue; }
       if (!PARSE_STOPWORDS.has(w)) rest.push(w);
     }
     if (!rest.length) continue;
@@ -839,7 +840,7 @@ function parseFoodText(text) {
     items.push({
       query: rest.join(" "),
       meal,
-      grams: resolveGrams({ grams, count, measure }, food),
+      grams: resolveGrams({ grams, count, measure, mini }, food),
       food: food ? {
         name: food.name,
         emoji: foodEmoji(food),
@@ -850,10 +851,11 @@ function parseFoodText(text) {
   return items;
 }
 
-function resolveGrams({ grams, count, measure }, food) {
+function resolveGrams({ grams, count, measure, mini }, food) {
   if (grams) return Math.round(grams);
-  const portion = food ? food.portion : 100;
-  const unit = food && food.unit ? food.unit : null;
+  const size = mini ? 0.5 : 1; // "mini"/"mignon": circa metà del formato normale
+  const portion = (food ? food.portion : 100) * size;
+  const unit = food && food.unit ? food.unit * size : null;
   if (measure != null) {
     const n = count || 1;
     if (measure === "portion") return Math.round(n * portion);
@@ -966,14 +968,29 @@ const AI_SYSTEM = `Sei il motore di un diario alimentare italiano. Ricevi la tra
 di un messaggio vocale in cui una persona racconta liberamente cosa ha mangiato o bevuto.
 Estrai SOLO gli alimenti e le bevande effettivamente consumati dalla persona, ignorando
 tutto il resto del discorso (luoghi, persone, commenti, divagazioni).
-Per ogni alimento:
-- stima la porzione in grammi: rispetta le quantità dette dall'utente; altrimenti usa
-  porzioni tipiche italiane o da ristorante (es. uno smash burger ≈ 250 g, una porzione
-  di patatine fritte ≈ 150 g, un piatto di pasta cotta ≈ 300 g);
+
+Piatti assemblati: se il piatto è fatto di componenti distinti (panino con pollo fritto,
+insalata con tonno e mais, piadina con crudo e squacquerone), restituisci UNA VOCE PER
+COMPONENTE (es. pane ~90 g, pollo fritto ~120 g, salsa ~20 g), così la persona può poi
+correggere il peso di ogni ingrediente separatamente. Restano una voce sola solo i piatti
+con ricetta fusa e inseparabile (lasagna, tiramisù, risotto, pizza).
+
+Per ogni voce:
+- quantità: se la persona conta i pezzi ("2 fagottini", "tre biscotti"), compila "pezzi"
+  e stima in "grammi_a_pezzo" il peso realistico di UN pezzo, facendo attenzione al
+  formato: «mini» o «mignon» pesa circa la metà del formato normale (mini fagottino o
+  mini cornetto ≈ 25 g, fagottino/cornetto normale ≈ 50-60 g, biscotto ≈ 8-12 g,
+  cioccolatino ≈ 10 g, polpetta ≈ 30-40 g, pezzo di sushi ≈ 25-35 g); in "grammi" metti
+  il totale = pezzi × grammi_a_pezzo. Se non ci sono pezzi contati metti pezzi = 0 e
+  grammi_a_pezzo = 0, e in "grammi" la porzione: rispetta le quantità dette dall'utente,
+  altrimenti usa porzioni tipiche italiane o da ristorante (uno smash burger ≈ 250 g,
+  una porzione di patatine fritte ≈ 150 g, un piatto di pasta cotta ≈ 300 g). Non
+  gonfiare i pesi: meglio la porzione tipica che un valore arrotondato a 100 g.
 - stima i valori nutrizionali medi per 100 g (kcal, proteine, carboidrati, grassi) da
-  fonti standard tipo CREA/USDA; per i piatti composti stima la ricetta media;
+  fonti standard tipo CREA/USDA;
 - assegna il pasto usando i riferimenti nel testo ("stasera" → cena, "stamattina" →
-  colazione, "a pranzo" → pranzo); senza riferimenti, deducilo dall'ora attuale indicata.
+  colazione, "a pranzo" → pranzo); senza riferimenti, deducilo dall'ora attuale indicata;
+  i componenti dello stesso piatto vanno nello stesso pasto.
 Non inventare alimenti non menzionati. Se non ci sono alimenti, restituisci la lista vuota.`;
 
 const AI_SCHEMA = {
@@ -986,11 +1003,13 @@ const AI_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["nome", "pasto", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
+        required: ["nome", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
         properties: {
           nome: { type: "string", description: "Nome breve dell'alimento in italiano" },
           pasto: { type: "string", enum: ["colazione", "pranzo", "spuntino", "cena"] },
-          grammi: { type: "number", description: "Porzione consumata stimata, in grammi" },
+          pezzi: { type: "number", description: "Numero di pezzi contati dalla persona; 0 se non conta a pezzi" },
+          grammi_a_pezzo: { type: "number", description: "Peso realistico di un singolo pezzo in grammi; 0 se non conta a pezzi" },
+          grammi: { type: "number", description: "Porzione totale consumata stimata, in grammi (= pezzi × grammi_a_pezzo se contata a pezzi)" },
           kcal_100g: { type: "number" },
           proteine_100g: { type: "number" },
           carboidrati_100g: { type: "number" },
@@ -1013,21 +1032,29 @@ async function aiParseFoodText(text) {
       text: `Ora attuale: ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}.\nTrascrizione: «${text}»`,
     }],
   });
-  return (parsed.alimenti || []).map((a) => ({
-    query: a.nome,
-    meal: MEALS.some((m) => m.id === a.pasto) ? a.pasto : currentMealSlot(),
-    grams: Math.max(1, Math.round(a.grammi)),
-    food: {
-      name: a.nome,
-      emoji: "🤖",
-      per100: {
-        kcal: Math.max(0, a.kcal_100g),
-        p: Math.max(0, a.proteine_100g),
-        c: Math.max(0, a.carboidrati_100g),
-        f: Math.max(0, a.grassi_100g),
+  return (parsed.alimenti || []).map((a) => {
+    // Il totale si ricalcola qui da pezzi × peso a pezzo: non ci si fida
+    // della moltiplicazione fatta dal modello dentro "grammi".
+    const pieces = Math.max(0, Math.round(a.pezzi || 0));
+    const perPiece = Math.max(0, Math.round(a.grammi_a_pezzo || 0));
+    const byPieces = pieces > 0 && perPiece > 0;
+    return {
+      query: a.nome,
+      meal: MEALS.some((m) => m.id === a.pasto) ? a.pasto : currentMealSlot(),
+      grams: Math.max(1, byPieces ? pieces * perPiece : Math.round(a.grammi)),
+      pieces: byPieces ? { n: pieces, g: perPiece } : null,
+      food: {
+        name: a.nome,
+        emoji: "🤖",
+        per100: {
+          kcal: Math.max(0, a.kcal_100g),
+          p: Math.max(0, a.proteine_100g),
+          c: Math.max(0, a.carboidrati_100g),
+          f: Math.max(0, a.grassi_100g),
+        },
       },
-    },
-  }));
+    };
+  });
 }
 
 function renderAiBox() {
@@ -1144,7 +1171,7 @@ function renderVoicePreview() {
         <span class="vp-emoji">${it.food.emoji}</span>
         <div class="vp-info">
           <div class="vp-name">${esc(it.food.name)}</div>
-          <div class="vp-detail">${r0(n.kcal)} kcal · P ${r0(n.p)} g</div>
+          <div class="vp-detail">${it.pieces ? `${it.pieces.n} pz × ${it.pieces.g} g · ` : ""}${r0(n.kcal)} kcal · P ${r0(n.p)} g</div>
         </div>
         <input type="number" class="input vp-grams" data-vgrams="${i}" value="${it.grams}" min="1">
         <select class="input vp-meal" data-vmeal="${i}">${opts}</select>
