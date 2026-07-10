@@ -6,9 +6,14 @@
   <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
   <title>NutriTrack — Diario calorie e macro</title>
-  <link rel="stylesheet" href="css/style.css?v=8">
+  <link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body>
+
+  <div id="splash" aria-hidden="true">
+    <div class="splash-orb"></div>
+    <div class="splash-name">NutriTrack</div>
+  </div>
 
   <header class="topbar">
     <div class="topbar-inner">
@@ -28,6 +33,12 @@
     <section class="card hero-card" aria-label="Riepilogo calorie">
       <div class="ring-wrap">
         <svg id="kcalRing" viewBox="0 0 132 132" width="132" height="132" role="img" aria-label="Progresso calorie">
+          <defs>
+            <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#f2c063"/>
+              <stop offset="1" stop-color="#e07b3a"/>
+            </linearGradient>
+          </defs>
           <circle class="ring-track" cx="66" cy="66" r="56"/>
           <circle class="ring-fill" id="ringFill" cx="66" cy="66" r="56"/>
         </svg>
@@ -456,8 +467,8 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/vendor/motion.js?v=8"></script>
-  <script src="js/foods.js?v=8"></script>
-  <script src="js/app.js?v=8"></script>
+  <script src="js/vendor/motion.js?v=9"></script>
+  <script src="js/foods.js?v=9"></script>
+  <script src="js/app.js?v=9"></script>
 </body>
 </html>

@@ -2681,6 +2681,21 @@ function init() {
   render();
   fx.fabIntro($$(".fab"));
   if (!state.goals) openGoalsModal();
+
+  // Apertura cinematica: bagliore + nome, poi dissolvenza sull'app
+  const splash = $("#splash");
+  if (splash) {
+    if (MOTION_OK) {
+      Motion.animate($(".splash-orb"), { opacity: [0, 1], scale: [0.7, 1] },
+        { duration: 0.9, ease: EASE_OUT });
+      Motion.animate($(".splash-name"), { opacity: [0, 1], y: [12, 0] },
+        { duration: 0.7, delay: 0.3, ease: EASE_OUT });
+      Motion.animate(splash, { opacity: [1, 0] },
+        { delay: 1.3, duration: 0.5, ease: "easeIn" }).finished.then(() => splash.remove());
+    } else {
+      splash.remove();
+    }
+  }
 }
 
 init();
