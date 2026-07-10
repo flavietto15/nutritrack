@@ -12,8 +12,8 @@
   --accent-ink: #fff9ee;  /* testo sopra l'accento */
   --glow: 227, 154, 74;   /* rgb del bagliore ambrato */
   --prot: #14926a;
-  --carb: #c78a12;
-  --fat:  #4c8a3f;
+  --carb: #bb8f0a;
+  --fat:  #b5473a;
 
   --danger: #c24537;
   --good: #3d7a34;
@@ -36,8 +36,8 @@
     --accent-ink: #1f1305;
     --glow: 230, 155, 70;
     --prot: #33be8d;
-    --carb: #e9a93d;
-    --fat:  #6fae62;
+    --carb: #e8c452;
+    --fat:  #e2695c;
 
     --danger: #e05b4e;
     --good: #6fbf73;
@@ -298,19 +298,23 @@ body {
   position: fixed;
   right: max(16px, calc(50% - 264px));
   bottom: 24px;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
+  height: 52px;
+  padding: 0 18px 0 14px;
+  border-radius: 999px;
   border: none;
   background: var(--kcal);
-  color: #fff;
-  font-size: 24px;
+  color: var(--accent-ink);
+  font-size: 20px;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(11, 11, 11, 0.25);
   z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
+.fab-label { font-size: 14px; font-weight: 700; letter-spacing: 0.01em; }
 .fab:active { transform: scale(0.95); }
-.fab-voice { bottom: 92px; background: var(--prot); }
+.fab-voice { bottom: 86px; background: var(--prot); }
 
 /* ===== Dettatura vocale ===== */
 .voice-text { resize: vertical; min-height: 64px; font-family: inherit; }

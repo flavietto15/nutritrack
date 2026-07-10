@@ -351,7 +351,7 @@ function renderMeals() {
               <span class="entry-kcal">${r0(n.kcal)} kcal</span>
             </div>`;
         }).join("")
-      : `<div class="empty-meal">Nessun alimento registrato.</div>`;
+      : `<div class="empty-meal">Nessun alimento — tocca <strong>+</strong> qui sopra, oppure 🎤 Detta o 📷 Scan in basso.</div>`;
     return `
       <div class="card meal-card">
         <div class="meal-head">
@@ -982,6 +982,8 @@ function resolveGrams({ grams, count, measure, mini }, food) {
 
 const AI_MODEL = "claude-opus-4-8";
 const GEMINI_MODEL = "gemini-2.5-flash";
+// Modello di riserva: quota gratuita giornaliera molto più alta
+const GEMINI_FALLBACK = "gemini-2.5-flash-lite";
 
 function aiProvider() {
   return state.apiKey && state.apiKey.startsWith("sk-") ? "anthropic" : "gemini";
@@ -1012,31 +1014,39 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
     const parts = blocks.map((b) => b.type === "text"
       ? { text: b.text }
       : { inline_data: { mime_type: b.media_type, data: b.data } });
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": state.apiKey },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-          responseSchema: jsonSchemaToGemini(schema),
-        },
-      }),
+    const body = JSON.stringify({
+      system_instruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        maxOutputTokens: 8192,
+        responseMimeType: "application/json",
+        responseSchema: jsonSchemaToGemini(schema),
+        // dettatura: risposta immediata; coach: il modello ragiona prima di rispondere
+        thinkingConfig: { thinkingBudget: effort === "low" ? 0 : 8192 },
+      },
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      const msg = err?.error?.message || "";
-      if (res.status === 403 || (res.status === 400 && /api key/i.test(msg)))
-        throw new Error("chiave Gemini non valida o non abilitata");
-      if (res.status === 429) throw new Error("limite gratuito Gemini raggiunto, riprova tra un minuto");
-      throw new Error(msg || "errore " + res.status);
+    // Se il modello principale ha esaurito la quota gratuita (429),
+    // riprova da solo con il modello di riserva prima di arrendersi.
+    for (const model of [GEMINI_MODEL, GEMINI_FALLBACK]) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": state.apiKey },
+        body,
+      });
+      if (res.status === 429) continue;
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        const msg = err?.error?.message || "";
+        if (res.status === 403 || (res.status === 400 && /api key/i.test(msg)))
+          throw new Error("chiave Gemini non valida o non abilitata");
+        throw new Error(msg || "errore " + res.status);
+      }
+      const data = await res.json();
+      const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+      if (!text) throw new Error("risposta vuota da Gemini");
+      return JSON.parse(text);
     }
-    const data = await res.json();
-    const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
-    if (!text) throw new Error("risposta vuota da Gemini");
-    return JSON.parse(text);
+    throw new Error("limite gratuito Gemini esaurito per ora: riprova tra un minuto; se hai finito le richieste del giorno, si azzerano ogni notte");
   }
 
   // Anthropic
@@ -1610,7 +1620,7 @@ function dayLifeAdjust(text) {
 }
 
 /** Calorie e macro consigliati per obiettivo e allenamento (riposo + allenamento) */
-function coachTargets(input) {
+function coachTargets(input, cons = null) {
   const { sex, age, weight, height, bf, goal, type, sessions, minutes } = input;
   // Katch-McArdle se conosce la massa grassa, altrimenti Mifflin-St Jeor
   const bmr = bf
@@ -1620,7 +1630,26 @@ function coachTargets(input) {
   const tdee = bmr * Math.max(1.15, Math.min(1.95, factor));
 
   const kcalMult = { cut: 0.80, maintain: 1.0, bulk: 1.10, recomp: 0.93 }[goal];
-  const kcal = Math.round(tdee * kcalMult / 10) * 10;
+  let kcal = Math.round(tdee * kcalMult / 10) * 10;
+
+  // Ancore reali dalle note (calorie già usate con un professionista):
+  // contano più del TDEE teorico, che resta solo come confronto.
+  let anchored = false;
+  if (cons) {
+    const mid = cons.kcalMaintain ||
+      (cons.kcalCut && cons.kcalBulk
+        ? Math.round((cons.kcalCut + cons.kcalBulk) / 2 / 10) * 10
+        : null);
+    const base = mid ||
+      (cons.kcalCut ? Math.round(cons.kcalCut / 0.85 / 10) * 10 : null) ||
+      (cons.kcalBulk ? Math.round(cons.kcalBulk / 1.08 / 10) * 10 : null);
+    if (base) {
+      if (goal === "cut" && cons.kcalCut) kcal = cons.kcalCut;
+      else if (goal === "bulk" && cons.kcalBulk) kcal = cons.kcalBulk;
+      else kcal = Math.round(base * { cut: 0.85, maintain: 1.0, bulk: 1.08, recomp: 0.95 }[goal] / 10) * 10;
+      anchored = true;
+    }
+  }
 
   const protPerKg = { cut: 2.0, maintain: 1.6, bulk: 1.8, recomp: 2.2 }[goal];
   const p = Math.round(weight * protPerKg);
@@ -1639,7 +1668,7 @@ function coachTargets(input) {
       rest.kcal = cutRest;
     }
   }
-  return { bmr: Math.round(bmr), tdee: Math.round(tdee), rest, train };
+  return { bmr: Math.round(bmr), tdee: Math.round(tdee), rest, train, anchored };
 }
 
 /* Analisi locale dei gruppi muscolari dal testo dell'allenamento */
@@ -1845,6 +1874,13 @@ esplicitamente, citando le parole o i numeri della persona, e spiega come ne hai
 conto nei macro o nei consigli. Nessun dato fornito deve restare senza commento. Se nelle
 note ci sono indicazioni di un professionista (es. "la nutrizionista ha detto di non
 scendere sotto X kcal"), rispettale nei macro e dillo.
+ANCORE REALI: se la persona riferisce calorie già prescritte o vissute sul proprio corpo
+(es. "in cut stavo a 1900, in bulk a 2300"), quei numeri valgono PIÙ di qualsiasi formula:
+il suo mantenimento reale sta circa a metà tra cut e bulk noti (nell'esempio ≈2100), il cut
+va vicino al valore di cut noto e il bulk vicino al valore di bulk noto. NON proporre
+calorie lontane da queste ancore solo perché il TDEE teorico dice altro: le formule servono
+solo quando mancano dati reali. Se il tuo calcolo teorico si discosta molto dalle ancore,
+fidati delle ancore, usa il TDEE solo come confronto e spiega la scelta nell'analisi.
 - "verdetto": 2-3 frasi di sintesi: se la strada scelta è quella giusta per l'obiettivo e la
   cosa più importante da sistemare per prima.
 - "analisi": 4-8 punti con livello ok/warn/bad su calorie, proteine, allenamento, recupero e
@@ -1968,8 +2004,8 @@ async function aiCoachAnalyze(input, files) {
   return aiComplete({
     system: AI_COACH_SYSTEM,
     schema: AI_COACH_SCHEMA,
-    maxTokens: 3000,
-    effort: "medium",
+    maxTokens: 4000,
+    effort: "high",
     blocks,
   });
 }
@@ -2075,9 +2111,21 @@ function readCoachFile(sel) {
  *  esclusioni, pasti sgarro, fase indicata dal professionista) */
 function parseCoachNotes(text) {
   const out = { sleep: null, injury: null, kcalFloor: null, exclusions: [],
-    cheats: null, phase: null, cutMacros: false };
+    cheats: null, phase: null, cutMacros: false,
+    kcalCut: null, kcalBulk: null, kcalMaintain: null };
   if (!text) return out;
   const t = text.toLowerCase();
+
+  // Ancore reali: calorie già prescritte/osservate ("in cut stavo a 1900,
+  // in bulk a 2300"). Valgono più di qualsiasi formula teorica.
+  const anchor = (re) => {
+    const m = t.match(re);
+    const n = m ? Number(m[1]) : null;
+    return n && n >= 1000 && n <= 5000 ? n : null;
+  };
+  out.kcalCut = anchor(/(?:cut|definizione|deficit)[^\d]{0,30}(\d{4})\s*(?:kcal|calorie)?/);
+  out.kcalBulk = anchor(/(?:bulk|massa)[^\d]{0,30}(\d{4})\s*(?:kcal|calorie)?/);
+  out.kcalMaintain = anchor(/(?:mantenim\w+|manten\w+)[^\d]{0,30}(\d{4})\s*(?:kcal|calorie)?/);
 
   // Pasti sgarro/liberi: "2/3 pasti sgarri", "2-3 sgarri", "un pasto libero"
   const gm = t.match(/(\d)\s*[\/\-–]\s*(\d)\s*(?:pasti\s+)?(?:sgarr\w+|liber\w+)/) ||
@@ -2180,7 +2228,16 @@ function localCoachView(input, files) {
 
   // Vincoli e segnali dalle note libere
   const cons = parseCoachNotes(input.notes);
-  const targets = coachTargets(input);
+  const targets = coachTargets(input, cons);
+
+  if (targets.anchored) {
+    const nums = [
+      cons.kcalCut ? `cut ${cons.kcalCut} kcal` : "",
+      cons.kcalBulk ? `bulk ${cons.kcalBulk} kcal` : "",
+      cons.kcalMaintain ? `mantenimento ${cons.kcalMaintain} kcal` : "",
+    ].filter(Boolean).join(", ");
+    extras.push({ level: "ok", text: `📎 Nelle note riporti calorie già usate nel tuo percorso (${nums}): sono <strong>dati reali sul tuo corpo</strong> e valgono più di qualsiasi formula, quindi ho ancorato i macro consigliati a quei numeri e non al calcolo teorico.` });
+  }
 
   if (cons.kcalFloor) {
     if (targets.rest.kcal < cons.kcalFloor) {
@@ -2452,7 +2509,7 @@ function renderTraining() {
             ${w.note ? `<div class="wk-note">${esc(w.note)}</div>` : ""}
           </div>`;
       }).join("")
-    : `<p class="hint">Nessun allenamento registrato ${viewDate === todayKey() ? "oggi" : "in questo giorno"}.</p>`;
+    : `<p class="hint">Nessun allenamento ${viewDate === todayKey() ? "oggi" : "in questo giorno"} — tocca <strong>＋ Registra</strong> qui sopra per segnarlo.</p>`;
 
   // Recap degli ultimi 7 giorni con i gruppi muscolari coperti
   let weekCount = 0;
