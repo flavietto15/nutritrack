@@ -1021,6 +1021,8 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
       contents: [{ role: "user", parts }],
       generationConfig: {
         maxOutputTokens: 8192,
+        // a parità di input la risposta deve restare la stessa
+        temperature: 0,
         responseMimeType: "application/json",
         responseSchema: jsonSchemaToGemini(schema),
         // dettatura: risposta immediata; coach: il modello ragiona prima di rispondere.
@@ -2190,6 +2192,13 @@ function parseDietText(text) {
   };
 }
 
+/** Impronta compatta di una stringa (anche molto lunga, es. file in base64) */
+function hash32(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+  return h.toString(36) + ":" + str.length;
+}
+
 async function runCoach() {
   const input = readCoachInput();
   state.coach = { ...input };
@@ -2206,7 +2215,16 @@ async function runCoach() {
     };
     if (state.apiKey) {
       try {
-        const ai = await aiCoachAnalyze(input, files);
+        // Stessi input → stesso risultato: se non è cambiato nulla dall'ultima
+        // analisi IA, riusa quella invece di rifare la stima (che potrebbe
+        // variare leggermente) e di consumare quota.
+        const cacheKey = hash32(JSON.stringify([input, files, AI_COACH_SYSTEM]));
+        const cached = state.coachAiCache;
+        const ai = cached && cached.key === cacheKey
+          ? cached.ai
+          : await aiCoachAnalyze(input, files);
+        state.coachAiCache = { key: cacheKey, ai };
+        saveState();
         renderCoachResults(input, aiCoachToView(input, ai, files));
         return;
       } catch (e) {
