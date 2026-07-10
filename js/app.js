@@ -1321,6 +1321,37 @@ function coachActivityFactor(type, sessions, minutes) {
   return Math.min(f, 1.9);
 }
 
+/** Correzione del fattore attività in base al racconto della giornata (modalità calcolo) */
+function dayLifeAdjust(text) {
+  if (!text) return { delta: 0, notes: [] };
+  const t = text.toLowerCase();
+  let delta = 0;
+  const notes = [];
+  if (/uffici|scrivania|seduto|seduta|smart working|al computer|sedentari/.test(t)) {
+    delta -= 0.05;
+    notes.push("lavoro sedentario");
+  }
+  if (/in piedi|camerier|commess|murator|cantier|magazzin|fattorin|rider|agricol|infermier|cuoc|barist/.test(t)) {
+    delta += 0.1;
+    notes.push("lavoro attivo, in piedi");
+  }
+  const steps = t.match(/(\d{1,2}[.\s]?\d{3}|\d{3,5})\s*passi/);
+  if (steps) {
+    const n = Number(steps[1].replace(/[.\s]/g, ""));
+    if (n >= 10000) { delta += 0.1; notes.push(`~${n} passi al giorno (tanti)`); }
+    else if (n >= 7000) { delta += 0.05; notes.push(`~${n} passi al giorno`); }
+    else if (n < 4000) { delta -= 0.03; notes.push(`~${n} passi al giorno (pochi)`); }
+  } else if (/cammin|a piedi|passeggiat/.test(t)) {
+    delta += 0.04;
+    notes.push("cammina regolarmente");
+  }
+  if (/bici per andare|in bici al lavoro|vado in bici/.test(t)) {
+    delta += 0.04;
+    notes.push("si sposta in bici");
+  }
+  return { delta: Math.max(-0.1, Math.min(0.25, delta)), notes };
+}
+
 /** Calorie e macro consigliati per obiettivo e allenamento (riposo + allenamento) */
 function coachTargets(input) {
   const { sex, age, weight, height, bf, goal, type, sessions, minutes } = input;
@@ -1328,7 +1359,8 @@ function coachTargets(input) {
   const bmr = bf
     ? 370 + 21.6 * weight * (1 - bf / 100)
     : 10 * weight + 6.25 * height - 5 * age + (sex === "m" ? 5 : -161);
-  const tdee = bmr * coachActivityFactor(type, sessions, minutes);
+  const factor = coachActivityFactor(type, sessions, minutes) + dayLifeAdjust(input.dayLife).delta;
+  const tdee = bmr * Math.max(1.15, Math.min(1.95, factor));
 
   const kcalMult = { cut: 0.80, maintain: 1.0, bulk: 1.10, recomp: 0.93 }[goal];
   const kcal = Math.round(tdee * kcalMult / 10) * 10;
@@ -1353,15 +1385,61 @@ function coachTargets(input) {
   return { bmr: Math.round(bmr), tdee: Math.round(tdee), rest, train };
 }
 
+/* Analisi locale dei gruppi muscolari dal testo dell'allenamento */
+const MUSCLE_MAP = {
+  petto: /panca|chest|croci|spinte|push.?up|piegament|pettoral|petto|dip/,
+  schiena: /trazion|pull.?up|chin.?up|rematore|lat machine|pulley|stacc|dorsal|schiena|row/,
+  spalle: /military|lento avanti|alzate|arnold|spalle|shoulder|overhead|ohp/,
+  gambe: /squat|affond|leg press|pressa|leg extension|leg curl|stacc|hip thrust|polpacc|gambe|corsa|bici|spinning|scatti/,
+  bicipiti: /curl|bicipit|trazion|chin.?up/,
+  tricipiti: /french press|pushdown|tricipit|dip|panca stretta/,
+  core: /plank|crunch|addominal|core|sit.?up|russian twist|hollow/,
+};
+const MUSCLE_SUGGEST = {
+  petto: "panca o piegamenti",
+  schiena: "trazioni o rematore",
+  spalle: "lento avanti o alzate laterali",
+  gambe: "squat o affondi",
+  bicipiti: "curl",
+  tricipiti: "dip o pushdown",
+  core: "plank",
+};
+
+function muscleAnalysis(text) {
+  const t = (text || "").toLowerCase();
+  const covered = [], missing = [];
+  for (const [group, re] of Object.entries(MUSCLE_MAP)) {
+    (re.test(t) ? covered : missing).push(group);
+  }
+  return { covered, missing };
+}
+
+function muscleSectionHtml(covered, missing, advice) {
+  if (!covered.length && !missing.length) return "";
+  const chips = [
+    ...covered.map((m) => `<span class="muscle-chip covered">✅ ${m}</span>`),
+    ...missing.map((m) => `<span class="muscle-chip missing">➕ ${m}</span>`),
+  ].join("");
+  return `
+    <p class="gsection">💪 Muscoli coinvolti dal tuo allenamento</p>
+    <div class="muscle-chips">${chips}</div>
+    ${advice ? `<p class="hint">${advice}</p>` : ""}`;
+}
+
 /** Elenco di verifiche ok/warn/bad sul piano attuale rispetto al consigliato */
 function coachChecks(input, targets) {
   const { weight, goal, type, sessions } = input;
   const checks = [];
   const add = (level, text) => checks.push({ level, text });
-  const g = state.goals;
+  const g = input.mode === "calc" ? null : state.goals;
 
-  // Obiettivo calorico attuale vs consigliato
-  if (!g) {
+  // Obiettivo calorico attuale vs consigliato (solo in modalità check-up)
+  if (input.mode === "calc") {
+    const adj = dayLifeAdjust(input.dayLife);
+    add("ok", adj.notes.length
+      ? `Ho calcolato i macro dai tuoi dati tenendo conto della tua giornata: ${adj.notes.join(", ")}.`
+      : "Ho calcolato i macro dai tuoi dati e dal tuo allenamento: trovi tutto nella tabella qui sotto.");
+  } else if (!g) {
     add("warn", "Non hai ancora obiettivi salvati: applica quelli consigliati qui sotto.");
   } else {
     const diff = g.kcal - targets.rest.kcal;
@@ -1407,9 +1485,10 @@ function coachChecks(input, targets) {
   }
 
   // Tempi realistici verso il peso obiettivo
-  if (input.targetW && state.goals) {
+  const planKcal = input.mode === "calc" ? targets.rest.kcal : state.goals?.kcal;
+  if (input.targetW && planKcal) {
     const deltaKg = input.targetW - weight;
-    const dailyGap = state.goals.kcal - targets.tdee; // + surplus, − deficit
+    const dailyGap = planKcal - targets.tdee; // + surplus, − deficit
     const weeklyKg = dailyGap * 7 / 7700;
     if (deltaKg < 0 && weeklyKg < 0) {
       const weeks = Math.ceil(deltaKg / weeklyKg);
@@ -1440,7 +1519,7 @@ function coachChecks(input, targets) {
   }
 
   // Aderenza del diario (ultimi 7 giorni con dati)
-  if (state.goals) {
+  if (state.goals && input.mode !== "calc") {
     const adh = diaryAverages(7);
     if (adh.days >= 3) {
       const kcalDev = (adh.kcal - state.goals.kcal) / state.goals.kcal;
@@ -1497,10 +1576,153 @@ function coachLinkTips(input) {
   return tips;
 }
 
+/* --- Coach IA: analisi completa con Claude (testo libero + foto) --- */
+
+const AI_COACH_SYSTEM = `Sei un coach italiano esperto di nutrizione sportiva e allenamento.
+Ricevi i dati di una persona (misure, obiettivo, allenamento, testi liberi e a volte una foto
+del fisico) e rispondi con un'analisi onesta, concreta e incoraggiante, dando del tu.
+- "verdetto": 2-3 frasi di sintesi: se la strada scelta è quella giusta per l'obiettivo e la
+  cosa più importante da sistemare per prima.
+- "analisi": 3-7 punti con livello ok/warn/bad su calorie, proteine, allenamento, recupero e
+  su OGNI dato extra fornito (plicometria, note, giornata tipo, foto). Se c'è una foto usala
+  per stimare con tatto la composizione corporea e i punti su cui lavorare.
+- "macro_riposo" e "macro_allenamento": calorie e macro giornalieri consigliati per
+  l'obiettivo (kcal, proteine/carboidrati/grassi in grammi). Se non serve distinguere i
+  giorni di allenamento, metti usa_macro_allenamento=false e ripeti gli stessi valori.
+- "muscoli_coperti" / "muscoli_da_aggiungere": dai dettagli dell'allenamento, i gruppi
+  muscolari già allenati e quelli scoperti (nomi brevi in italiano: petto, schiena, spalle,
+  gambe, bicipiti, tricipiti, core); "consiglio_allenamento": come completare la settimana
+  con esercizi concreti. Senza dettagli sull'allenamento lascia le liste vuote.
+- "consigli": 3-5 consigli pratici che collegano nutrizione e allenamento per QUESTA persona.
+Non fare diagnosi mediche; situazioni delicate (infortuni, sonno scarso, deficit estremi)
+segnalale come warn o bad.`;
+
+const AI_COACH_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verdetto", "analisi", "macro_riposo", "macro_allenamento", "usa_macro_allenamento",
+    "muscoli_coperti", "muscoli_da_aggiungere", "consiglio_allenamento", "consigli"],
+  properties: {
+    verdetto: { type: "string" },
+    analisi: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["livello", "testo"],
+        properties: {
+          livello: { type: "string", enum: ["ok", "warn", "bad"] },
+          testo: { type: "string" },
+        },
+      },
+    },
+    macro_riposo: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kcal", "proteine", "carboidrati", "grassi"],
+      properties: {
+        kcal: { type: "number" }, proteine: { type: "number" },
+        carboidrati: { type: "number" }, grassi: { type: "number" },
+      },
+    },
+    macro_allenamento: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kcal", "proteine", "carboidrati", "grassi"],
+      properties: {
+        kcal: { type: "number" }, proteine: { type: "number" },
+        carboidrati: { type: "number" }, grassi: { type: "number" },
+      },
+    },
+    usa_macro_allenamento: { type: "boolean" },
+    muscoli_coperti: { type: "array", items: { type: "string" } },
+    muscoli_da_aggiungere: { type: "array", items: { type: "string" } },
+    consiglio_allenamento: { type: "string" },
+    consigli: { type: "array", items: { type: "string" } },
+  },
+};
+
+const GOAL_LABEL = {
+  cut: "perdere grasso", maintain: "mantenersi",
+  bulk: "mettere massa muscolare", recomp: "ricomposizione (perdere grasso tenendo il muscolo)",
+};
+
+function coachPromptText(input) {
+  const lines = [
+    input.mode === "calc"
+      ? "MODALITÀ: calcola tu i macro giusti per il mio obiettivo in base a come vivo e mi alleno."
+      : "MODALITÀ: rivedi il mio piano attuale e dimmi se è la strada giusta per il mio obiettivo.",
+    `Dati: ${input.sex === "m" ? "uomo" : "donna"}, ${input.age} anni, ${input.weight} kg, ${input.height} cm` +
+      (input.bf ? `, massa grassa ${input.bf}%` : ""),
+    `Obiettivo: ${GOAL_LABEL[input.goal]}` + (input.targetW ? ` — peso obiettivo ${input.targetW} kg` : ""),
+    `Allenamento: ${TRAIN_LABEL[input.type]}, ${input.sessions} sedute/settimana da ~${input.minutes} minuti`,
+  ];
+  if (input.dayLife) lines.push(`La mia giornata tipo: «${input.dayLife}»`);
+  if (input.training) lines.push(`Il mio allenamento nel dettaglio: «${input.training}»`);
+  if (input.pliche) lines.push(`Plicometria/misure: «${input.pliche}»`);
+  if (input.notes) lines.push(`Altre note: «${input.notes}»`);
+  if (input.mode !== "calc" && state.goals) {
+    lines.push(`Macro attuali impostati nell'app — riposo: ${state.goals.kcal} kcal, P ${state.goals.p} g, C ${state.goals.c} g, G ${state.goals.f} g` +
+      (state.trainingGoals ? `; giorni di allenamento: ${state.trainingGoals.kcal} kcal, P ${state.trainingGoals.p} g, C ${state.trainingGoals.c} g, G ${state.trainingGoals.f} g` : ""));
+  }
+  const adh = diaryAverages(7);
+  if (adh.days >= 3) {
+    lines.push(`Dal diario (ultimi 7 giorni, ${adh.days} registrati): media ${Math.round(adh.kcal)} kcal e ${Math.round(adh.p)} g di proteine al giorno`);
+  }
+  return lines.join("\n");
+}
+
+async function aiCoachAnalyze(input, photo) {
+  const content = [];
+  if (photo) {
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: photo.media_type, data: photo.data },
+    });
+  }
+  content.push({ type: "text", text: coachPromptText(input) + (photo ? "\nIn allegato la foto del mio fisico." : "") });
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": state.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: 3000,
+      system: AI_COACH_SYSTEM,
+      output_config: { effort: "medium", format: { type: "json_schema", schema: AI_COACH_SCHEMA } },
+      messages: [{ role: "user", content }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    if (res.status === 401) throw new Error("chiave API non valida");
+    throw new Error(err?.error?.message || "errore " + res.status);
+  }
+  const data = await res.json();
+  if (data.stop_reason === "refusal") throw new Error("richiesta rifiutata");
+  const block = (data.content || []).find((b) => b.type === "text");
+  return JSON.parse(block.text);
+}
+
 let coachTargetsCache = null;
+let coachMode = "check";
+
+function setCoachMode(mode) {
+  coachMode = mode;
+  $$("#coachModes .coach-mode").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === mode));
+  $("#coachCalcOnly").classList.toggle("hidden", mode !== "calc");
+  $("#coachRun").textContent = mode === "calc" ? "🧮 Calcola i miei macro" : "🔍 Analizza il mio piano";
+}
 
 function readCoachInput() {
   return {
+    mode: coachMode,
     sex: $("#cSex").value,
     age: Number($("#cAge").value) || 30,
     weight: Number($("#cWeight").value) || 75,
@@ -1511,6 +1733,10 @@ function readCoachInput() {
     type: $("#cTrainType").value,
     sessions: Number($("#cSessions").value) || 0,
     minutes: Number($("#cMinutes").value) || 60,
+    dayLife: $("#cDayLife").value.trim(),
+    training: $("#cTraining").value.trim(),
+    pliche: $("#cPliche").value.trim(),
+    notes: $("#cNotes").value.trim(),
   };
 }
 
@@ -1527,50 +1753,176 @@ function openCoachModal() {
   $("#cTrainType").value = c.type || "pesi";
   $("#cSessions").value = c.sessions ?? 3;
   $("#cMinutes").value = c.minutes || 60;
+  $("#cDayLife").value = c.dayLife || "";
+  $("#cTraining").value = c.training || "";
+  $("#cPliche").value = c.pliche || "";
+  $("#cNotes").value = c.notes || "";
+  $("#cPhoto").value = "";
+  setCoachMode(c.mode || "check");
   $("#coachResults").innerHTML = "";
   openModal("coachModal");
 }
 
-function runCoach() {
+/** Legge la foto scelta e la ridimensiona (max 1024 px, JPEG) per l'invio all'IA */
+function readCoachPhoto() {
+  const file = $("#cPhoto").files[0];
+  if (!file) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      try {
+        resolve({ media_type: "image/jpeg", data: canvas.toDataURL("image/jpeg", 0.82).split(",")[1] });
+      } catch { resolve(null); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+async function runCoach() {
   const input = readCoachInput();
-  state.coach = input;
+  state.coach = { ...input };
   saveState();
 
+  const btn = $("#coachRun");
+  if (state.apiKey) {
+    btn.disabled = true;
+    btn.textContent = "🤖 Il coach sta analizzando…";
+    try {
+      const photo = await readCoachPhoto();
+      const ai = await aiCoachAnalyze(input, photo);
+      renderCoachResults(input, aiCoachToView(input, ai));
+      return;
+    } catch (e) {
+      toast("IA non disponibile (" + e.message + "): uso l'analisi locale");
+    } finally {
+      btn.disabled = false;
+      setCoachMode(input.mode);
+    }
+  }
+  renderCoachResults(input, localCoachView(input));
+}
+
+/** Analisi locale: formule + euristiche (nessuna chiave API necessaria) */
+function localCoachView(input) {
   const targets = coachTargets(input);
-  coachTargetsCache = targets;
   const checks = coachChecks(input, targets);
   const tips = coachLinkTips(input);
 
+  let muscles = null;
+  if (input.training) {
+    const m = muscleAnalysis(input.training);
+    if (m.covered.length) {
+      const advice = m.missing.length
+        ? "Per una settimana completa aggiungi lavoro per: " +
+          m.missing.map((g) => `<strong>${g}</strong> (${MUSCLE_SUGGEST[g]})`).join(", ") + "."
+        : "Copri tutti i principali gruppi muscolari: ottima struttura 💪";
+      muscles = { covered: m.covered, missing: m.missing, advice };
+    }
+  }
+
+  if ((input.pliche || input.notes) && !state.apiKey) {
+    checks.push({
+      level: "warn",
+      text: "Hai inserito dati extra (plicometria/note): con la modalità IA 🤖 attiva (chiave API nella dettatura vocale) il coach li legge e li usa nell'analisi.",
+    });
+  }
+
+  return {
+    badge: null,
+    intro: `Mantenimento stimato: <strong>${targets.tdee} kcal/giorno</strong> (metabolismo base ${targets.bmr} kcal).`,
+    verdict: null,
+    checks,
+    rest: targets.rest,
+    train: targets.train,
+    muscles,
+    tips,
+    footer: "Stime indicative basate su formule standard (Mifflin-St Jeor / Katch-McArdle): non sostituiscono medico o nutrizionista.",
+  };
+}
+
+/** Converte la risposta dell'IA nella stessa struttura usata dal render */
+function aiCoachToView(input, ai) {
+  const toMacro = (m) => ({
+    kcal: Math.round(m.kcal), p: Math.round(m.proteine),
+    c: Math.round(m.carboidrati), f: Math.round(m.grassi),
+  });
+  const rest = toMacro(ai.macro_riposo);
+  const train = ai.usa_macro_allenamento ? toMacro(ai.macro_allenamento) : null;
+  let muscles = null;
+  if (ai.muscoli_coperti.length || ai.muscoli_da_aggiungere.length) {
+    muscles = {
+      covered: ai.muscoli_coperti,
+      missing: ai.muscoli_da_aggiungere,
+      advice: ai.consiglio_allenamento || "",
+    };
+  }
+  return {
+    badge: "🤖 Analisi IA personalizzata" + ($("#cPhoto").files[0] ? " (foto inclusa)" : ""),
+    intro: null,
+    verdict: ai.verdetto,
+    checks: ai.analisi.map((a) => ({ level: a.livello, text: a.testo })),
+    rest,
+    train,
+    muscles,
+    tips: ai.consigli,
+    footer: "Analisi generata dall'IA sui dati che hai fornito: non sostituisce medico o nutrizionista.",
+  };
+}
+
+function renderCoachResults(input, view) {
+  coachTargetsCache = { rest: view.rest, train: view.train };
   const LEVEL = { ok: "✅", warn: "⚠️", bad: "❌" };
-  const trainRow = targets.train ? `
-      <tr><td>🏋️ Allenamento</td><td>${targets.train.kcal}</td><td>${targets.train.p}</td><td>${targets.train.c}</td><td>${targets.train.f}</td></tr>` : "";
+  const trainRow = view.train ? `
+      <tr><td>🏋️ Allenamento</td><td>${view.train.kcal}</td><td>${view.train.p}</td><td>${view.train.c}</td><td>${view.train.f}</td></tr>` : "";
 
-  $("#coachResults").innerHTML = `
-    <p class="gsection">📋 Verdetto</p>
-    <p class="hint">Mantenimento stimato: <strong>${targets.tdee} kcal/giorno</strong> (metabolismo base ${targets.bmr} kcal).</p>
-    <div class="coach-checks">
-      ${checks.map((ch) => `
-        <div class="coach-check coach-${ch.level}">
-          <span>${LEVEL[ch.level]}</span>
-          <span>${ch.text}</span>
-        </div>`).join("")}
-    </div>
-
-    <p class="gsection">🎯 Macro consigliati</p>
+  const macroTable = `
+    <p class="gsection">${input.mode === "calc" ? "🧮 I tuoi macro per l'obiettivo" : "🎯 Macro consigliati"}</p>
     <div class="coach-table-wrap">
       <table class="coach-table">
         <thead><tr><th>Giorno</th><th>kcal</th><th>P (g)</th><th>C (g)</th><th>G (g)</th></tr></thead>
         <tbody>
-          <tr><td>${targets.train ? "🛋️ Riposo" : "Ogni giorno"}</td><td>${targets.rest.kcal}</td><td>${targets.rest.p}</td><td>${targets.rest.c}</td><td>${targets.rest.f}</td></tr>${trainRow}
+          <tr><td>${view.train ? "🛋️ Riposo" : "Ogni giorno"}</td><td>${view.rest.kcal}</td><td>${view.rest.p}</td><td>${view.rest.c}</td><td>${view.rest.f}</td></tr>${trainRow}
         </tbody>
       </table>
     </div>
-    <button class="btn primary full" id="coachApply">Applica questi obiettivi</button>
+    <button class="btn primary full" id="coachApply">Applica questi obiettivi</button>`;
 
+  const verdictBlock = `
+    <p class="gsection">📋 Verdetto</p>
+    ${view.badge ? `<span class="coach-ai-badge">${view.badge}</span>` : ""}
+    ${view.verdict ? `<p class="coach-tip"><strong>${view.verdict}</strong></p>` : ""}
+    ${view.intro ? `<p class="hint">${view.intro}</p>` : ""}
+    <div class="coach-checks">
+      ${view.checks.map((ch) => `
+        <div class="coach-check coach-${LEVEL[ch.level] ? ch.level : "warn"}">
+          <span>${LEVEL[ch.level] || "⚠️"}</span>
+          <span>${ch.text}</span>
+        </div>`).join("")}
+    </div>`;
+
+  const muscleBlock = view.muscles
+    ? muscleSectionHtml(view.muscles.covered, view.muscles.missing, view.muscles.advice)
+    : "";
+
+  // In modalità calcolo i macro sono la risposta: vanno per primi
+  const main = input.mode === "calc"
+    ? macroTable + verdictBlock
+    : verdictBlock + macroTable;
+
+  $("#coachResults").innerHTML = `
+    ${main}
+    ${muscleBlock}
     <p class="gsection">🔗 Nutrizione ↔ allenamento</p>
-    <div class="coach-tips">${tips.map((t) => `<p class="coach-tip">${t}</p>`).join("")}</div>
-    <p class="hint">Stime indicative basate su formule standard (Mifflin-St Jeor / Katch-McArdle):
-      non sostituiscono medico o nutrizionista.</p>`;
+    <div class="coach-tips">${view.tips.map((t) => `<p class="coach-tip">${t}</p>`).join("")}</div>
+    <p class="hint">${view.footer}</p>`;
 
   $("#coachApply").addEventListener("click", applyCoachTargets);
   $("#coachResults").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1695,6 +2047,9 @@ function init() {
   // Coach
   $("#openCoach").addEventListener("click", openCoachModal);
   $("#coachRun").addEventListener("click", runCoach);
+  $$("#coachModes .coach-mode").forEach((b) =>
+    b.addEventListener("click", () => setCoachMode(b.dataset.mode))
+  );
 
   // Chiusura modali
   $$("[data-close]").forEach((b) =>

@@ -311,6 +311,19 @@
         <button class="icon-btn" data-close="coachModal">✕</button>
       </div>
 
+      <div class="coach-modes" id="coachModes">
+        <button class="coach-mode active" data-mode="check" id="coachModeCheck">
+          <span class="cm-icon">🔍</span>
+          <span class="cm-title">Rivedi il mio piano</span>
+          <span class="cm-desc">Uso i macro che hai impostato e ti dico se vanno bene per il tuo obiettivo</span>
+        </button>
+        <button class="coach-mode" data-mode="calc" id="coachModeCalc">
+          <span class="cm-icon">🧮</span>
+          <span class="cm-title">Calcola i miei macro</span>
+          <span class="cm-desc">Mi racconti la tua giornata e i tuoi valori, e ti dico io i macro per il tuo obiettivo</span>
+        </button>
+      </div>
+
       <p class="gsection">📏 I tuoi dati</p>
       <div class="grid-2">
         <label class="field">Sesso
@@ -346,6 +359,14 @@
         <input type="number" id="cTargetW" class="input" min="35" max="250" placeholder="es. 70">
       </label>
 
+      <div id="coachCalcOnly" class="hidden">
+        <p class="gsection">🗓️ La tua giornata</p>
+        <label class="field">Racconta cosa fai durante il giorno
+          <textarea id="cDayLife" class="input coach-text" rows="3"
+            placeholder="Es. lavoro in ufficio seduto 8 ore, cammino 30 minuti al giorno, la sera vado in palestra 3 volte a settimana, nel weekend partita di calcetto…"></textarea>
+        </label>
+      </div>
+
       <p class="gsection">🏋️ Come ti alleni</p>
       <label class="field">Tipo di allenamento
         <select id="cTrainType" class="input">
@@ -365,6 +386,23 @@
           <input type="number" id="cMinutes" class="input" min="15" max="240" step="15" value="60">
         </label>
       </div>
+
+      <p class="gsection">📎 Dati extra (tutti opzionali — scrivi liberamente)</p>
+      <label class="field">Il tuo allenamento nel dettaglio
+        <textarea id="cTraining" class="input coach-text" rows="2"
+          placeholder="Es. lunedì panca e spalle, mercoledì squat e stacchi, venerdì trazioni e curl…"></textarea>
+      </label>
+      <label class="field">Plicometria / misure
+        <textarea id="cPliche" class="input coach-text" rows="2"
+          placeholder="Es. plica addome 18 mm, coscia 12 mm, vita 84 cm, bilancia impedenziometrica 19%…"></textarea>
+      </label>
+      <label class="field">Altro che il coach dovrebbe sapere
+        <textarea id="cNotes" class="input coach-text" rows="2"
+          placeholder="Es. dormo 6 ore, faccio 4000 passi al giorno, spalla infortunata, non mangio pesce…"></textarea>
+      </label>
+      <label class="field">Foto del tuo fisico (analizzata solo con la modalità IA 🤖)
+        <input type="file" id="cPhoto" class="input" accept="image/*">
+      </label>
 
       <button class="btn primary full" id="coachRun">Analizza il mio piano</button>
       <div id="coachResults"></div>
