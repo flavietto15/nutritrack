@@ -40,6 +40,17 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Feedback al tocco su tutti i controlli */
+.btn:active, .icon-btn:active, .step-btn:active, .sugg-add:active,
+.meal-add:active, .day-type:active, .ghost-btn:active, .coach-mode:active {
+  transform: scale(0.95);
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn:active, .icon-btn:active, .step-btn:active, .sugg-add:active,
+  .meal-add:active, .day-type:active, .ghost-btn:active, .coach-mode:active,
+  .fab:active { transform: none; }
+}
+
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--bg);

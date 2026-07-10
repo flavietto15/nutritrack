@@ -75,10 +75,13 @@ function dateToKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+let staggerNextRender = true; // all'avvio e al cambio giorno le liste entrano in sequenza
+
 function shiftViewDate(days) {
   const [y, m, d] = viewDate.split("-").map(Number);
   const dt = new Date(y, m - 1, d + days);
   viewDate = dateToKey(dt);
+  staggerNextRender = true;
   render();
 }
 
@@ -95,6 +98,58 @@ function fmtDate(key) {
 function r0(n) { return Math.round(n); }
 function r1(n) { return Math.round(n * 10) / 10; }
 
+/* ---------- Animazioni (Motion) ---------- */
+
+const MOTION_OK = typeof Motion !== "undefined" &&
+  !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+const EASE_OUT = [0.22, 1, 0.36, 1];
+
+const fx = {
+  /** Anello kcal con effetto molla (al posto della transizione CSS) */
+  ring(el, to) {
+    const from = parseFloat(el.style.strokeDashoffset);
+    if (!MOTION_OK || isNaN(from) || Math.abs(from - to) < 1) {
+      el.style.strokeDashoffset = to;
+      return;
+    }
+    el.style.transition = "stroke 0.3s";
+    Motion.animate(from, to, {
+      type: "spring", stiffness: 110, damping: 22,
+      onUpdate: (v) => { el.style.strokeDashoffset = v; },
+    });
+  },
+
+  /** Numero che "conta" fino al nuovo valore */
+  count(el, value, suffix = "", prefix = "") {
+    const from = parseFloat((el.textContent || "").replace(/[^\d.-]/g, ""));
+    const write = (v) => { el.textContent = prefix + r0(v) + suffix; };
+    if (!MOTION_OK || isNaN(from) || r0(from) === r0(value)) { write(value); return; }
+    Motion.animate(from, value, { duration: 0.6, ease: EASE_OUT, onUpdate: write });
+  },
+
+  /** Barre dei macro dal valore precedente al nuovo */
+  meterFill(el, from, to) {
+    if (!MOTION_OK || Math.abs(from - to) < 0.5) return;
+    el.style.transition = "none";
+    Motion.animate(el, { width: [from + "%", to + "%"] }, { duration: 0.55, ease: EASE_OUT });
+  },
+
+  /** Elementi di una lista che entrano in sequenza */
+  staggerList(els) {
+    if (!MOTION_OK || !els.length) return;
+    Motion.animate(els, { opacity: [0, 1], y: [10, 0] },
+      { delay: Motion.stagger(0.04), duration: 0.35, ease: EASE_OUT });
+  },
+
+  /** Comparsa dei pulsanti flottanti all'avvio */
+  fabIntro(els) {
+    if (!MOTION_OK) return;
+    Motion.animate(els, { opacity: [0, 1], scale: [0.4, 1] },
+      { delay: Motion.stagger(0.07, { startDelay: 0.25 }), type: "spring", stiffness: 380, damping: 22 });
+  },
+};
+
 let toastTimer = null;
 function toast(msg) {
   const el = $("#toast");
@@ -104,9 +159,43 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.add("hidden"), 2200);
 }
 
-function openModal(id) { $("#" + id).classList.remove("hidden"); }
+const modalCloseToken = {};
+
+function openModal(id) {
+  const bd = $("#" + id);
+  modalCloseToken[id] = null; // annulla un'eventuale chiusura in corso
+  bd.style.opacity = "";
+  const m = bd.querySelector(".modal");
+  if (m) { m.style.opacity = ""; m.style.transform = ""; }
+  bd.classList.remove("hidden");
+  if (MOTION_OK) {
+    Motion.animate(bd, { opacity: [0, 1] }, { duration: 0.18, ease: "easeOut" });
+    if (m) Motion.animate(m,
+      { opacity: [0, 1], scale: [0.94, 1], y: [18, 0] },
+      { type: "spring", stiffness: 420, damping: 32 });
+  }
+}
+
 function closeModal(id) {
-  $("#" + id).classList.add("hidden");
+  const bd = $("#" + id);
+  if (!bd.classList.contains("hidden")) {
+    const m = bd.querySelector(".modal");
+    if (MOTION_OK) {
+      const token = {};
+      modalCloseToken[id] = token;
+      if (m) Motion.animate(m,
+        { opacity: 0, scale: 0.96, y: 12 },
+        { duration: 0.13, ease: "easeIn" });
+      Motion.animate(bd, { opacity: 0 }, { duration: 0.16, ease: "easeIn" }).finished.then(() => {
+        if (modalCloseToken[id] !== token) return; // riaperto nel frattempo
+        bd.classList.add("hidden");
+        bd.style.opacity = "";
+        if (m) { m.style.opacity = ""; m.style.transform = ""; }
+      });
+    } else {
+      bd.classList.add("hidden");
+    }
+  }
   if (id === "addModal") stopScanner();
   if (id === "voiceModal") stopMic();
 }
@@ -184,17 +273,17 @@ function render() {
   const ring = $("#ringFill");
   const pct = Math.min(totals.kcal / g.kcal, 1);
   ring.style.strokeDasharray = RING_C;
-  ring.style.strokeDashoffset = RING_C * (1 - pct);
+  fx.ring(ring, RING_C * (1 - pct));
   ring.classList.toggle("over", totals.kcal > g.kcal);
-  $("#ringValue").textContent = r0(totals.kcal);
-  $("#statGoal").textContent = `${r0(g.kcal)} kcal`;
-  $("#statEaten").textContent = `${r0(totals.kcal)} kcal`;
+  fx.count($("#ringValue"), totals.kcal);
+  fx.count($("#statGoal"), g.kcal, " kcal");
+  fx.count($("#statEaten"), totals.kcal, " kcal");
   const leftEl = $("#statLeft");
   if (rem.kcal >= 0) {
-    leftEl.textContent = `${r0(rem.kcal)} kcal`;
+    fx.count(leftEl, rem.kcal, " kcal");
     leftEl.classList.remove("negative");
   } else {
-    leftEl.textContent = `+${r0(-rem.kcal)} oltre`;
+    fx.count(leftEl, -rem.kcal, " oltre", "+");
     leftEl.classList.add("negative");
   }
 
@@ -202,14 +291,23 @@ function render() {
   renderSuggestions();
   renderTraining();
   renderMeals();
+
+  if (staggerNextRender) {
+    staggerNextRender = false;
+    fx.staggerList($$("#mealsRoot .meal-card"));
+  }
 }
+
+const prevMeterPct = {};
 
 function renderMeters(totals) {
   const g = activeGoals();
+  const pcts = {};
   $("#macroMeters").innerHTML = MACROS.map((m) => {
     const eaten = totals[m.id];
     const goal = g[m.id];
     const pct = goal > 0 ? Math.min((eaten / goal) * 100, 100) : 0;
+    pcts[m.id] = pct;
     const over = eaten - goal;
     const color = `var(${m.cssVar})`;
     return `
@@ -227,6 +325,13 @@ function renderMeters(totals) {
         </div>
       </div>`;
   }).join("");
+
+  // Le barre si muovono dal valore precedente al nuovo
+  $$("#macroMeters .meter-fill").forEach((fill, i) => {
+    const id = MACROS[i].id;
+    fx.meterFill(fill, prevMeterPct[id] ?? 0, pcts[id]);
+    prevMeterPct[id] = pcts[id];
+  });
 }
 
 function renderMeals() {
@@ -1230,6 +1335,8 @@ function renderVoicePreview() {
   const found = voiceItems.filter((it) => it.food).length;
   $("#voiceAddAll").classList.toggle("hidden", !found);
   $("#voiceAddAll").textContent = `Aggiungi ${found > 1 ? found + " voci" : "al diario"}`;
+
+  fx.staggerList($$("#voiceParsed .vp-row"));
 
   $$("[data-vgrams]").forEach((inp) => inp.addEventListener("input", () => {
     const it = voiceItems[Number(inp.dataset.vgrams)];
@@ -2447,12 +2554,13 @@ function init() {
   // Data
   $("#prevDay").addEventListener("click", () => shiftViewDate(-1));
   $("#nextDay").addEventListener("click", () => shiftViewDate(1));
-  $("#dateLabel").addEventListener("click", () => { viewDate = todayKey(); render(); });
+  $("#dateLabel").addEventListener("click", () => { viewDate = todayKey(); staggerNextRender = true; render(); });
 
   // Suggerimenti
   $("#refreshSuggestions").addEventListener("click", () => {
     suggOffset += 4;
     renderSuggestions();
+    fx.staggerList($$("#suggestionList .sugg-row"));
   });
 
   // Aggiungi
@@ -2571,6 +2679,7 @@ function init() {
   }, 5 * 60 * 1000);
 
   render();
+  fx.fabIntro($$(".fab"));
   if (!state.goals) openGoalsModal();
 }
 
