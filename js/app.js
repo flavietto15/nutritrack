@@ -982,8 +982,10 @@ function resolveGrams({ grams, count, measure, mini }, food) {
 
 const AI_MODEL = "claude-opus-4-8";
 const GEMINI_MODEL = "gemini-2.5-flash";
-// Modello di riserva: quota gratuita giornaliera molto più alta
-const GEMINI_FALLBACK = "gemini-2.5-flash-lite";
+// Modelli di riserva, in ordine: prima il "lite" (quota giornaliera più alta),
+// poi gli alias "-latest" di Google che puntano sempre al modello più recente —
+// così se Google ritira un modello (es. per le chiavi nuove) l'app non si rompe.
+const GEMINI_FALLBACKS = ["gemini-2.5-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest"];
 
 function aiProvider() {
   return state.apiKey && state.apiKey.startsWith("sk-") ? "anthropic" : "gemini";
@@ -1014,39 +1016,50 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
     const parts = blocks.map((b) => b.type === "text"
       ? { text: b.text }
       : { inline_data: { mime_type: b.media_type, data: b.data } });
-    const body = JSON.stringify({
+    const bodyFor = (model) => JSON.stringify({
       system_instruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts }],
       generationConfig: {
         maxOutputTokens: 8192,
         responseMimeType: "application/json",
         responseSchema: jsonSchemaToGemini(schema),
-        // dettatura: risposta immediata; coach: il modello ragiona prima di rispondere
-        thinkingConfig: { thinkingBudget: effort === "low" ? 0 : 8192 },
+        // dettatura: risposta immediata; coach: il modello ragiona prima di rispondere.
+        // Solo per la famiglia 2.5: i modelli più nuovi dietro gli alias
+        // potrebbero non accettare questo parametro.
+        ...(model.startsWith("gemini-2.5")
+          ? { thinkingConfig: { thinkingBudget: effort === "low" ? 0 : 8192 } }
+          : {}),
       },
     });
-    // Se il modello principale ha esaurito la quota gratuita (429),
-    // riprova da solo con il modello di riserva prima di arrendersi.
-    for (const model of [GEMINI_MODEL, GEMINI_FALLBACK]) {
+    // Quota esaurita (429) o modello ritirato/non trovato: prova il successivo.
+    let quotaHit = false;
+    let lastMsg = "";
+    for (const model of [GEMINI_MODEL, ...GEMINI_FALLBACKS]) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": state.apiKey },
-        body,
+        body: bodyFor(model),
       });
-      if (res.status === 429) continue;
       if (!res.ok) {
         const err = await res.json().catch(() => null);
-        const msg = err?.error?.message || "";
+        const msg = err?.error?.message || "errore " + res.status;
         if (res.status === 403 || (res.status === 400 && /api key/i.test(msg)))
           throw new Error("chiave Gemini non valida o non abilitata");
-        throw new Error(msg || "errore " + res.status);
+        if (res.status === 429) { quotaHit = true; continue; }
+        if (res.status === 404 || /no longer available|not (?:found|available)|deprecat|retired/i.test(msg)) {
+          lastMsg = msg;
+          continue;
+        }
+        throw new Error(msg);
       }
       const data = await res.json();
       const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
       if (!text) throw new Error("risposta vuota da Gemini");
       return JSON.parse(text);
     }
-    throw new Error("limite gratuito Gemini esaurito per ora: riprova tra un minuto; se hai finito le richieste del giorno, si azzerano ogni notte");
+    throw new Error(quotaHit
+      ? "limite gratuito Gemini esaurito per ora: riprova tra un minuto; se hai finito le richieste del giorno, si azzerano ogni notte"
+      : lastMsg || "nessun modello Gemini disponibile");
   }
 
   // Anthropic
