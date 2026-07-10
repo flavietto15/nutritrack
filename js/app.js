@@ -865,9 +865,101 @@ function resolveGrams({ grams, count, measure }, food) {
   return portion;
 }
 
-/* --- Modalità IA (Claude): comprensione del parlato libero --- */
+/* --- Modalità IA: comprensione del parlato libero e analisi coach ---
+   Due provider, riconosciuti dal prefisso della chiave: Google Gemini
+   (chiave AIza…, creabile gratis su aistudio.google.com) o Anthropic
+   (chiave sk-ant-…). --- */
 
 const AI_MODEL = "claude-opus-4-8";
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+function aiProvider() {
+  return state.apiKey && state.apiKey.startsWith("AIza") ? "gemini" : "anthropic";
+}
+
+function aiProviderLabel() {
+  return aiProvider() === "gemini" ? "Google Gemini, piano gratuito" : "Claude di Anthropic";
+}
+
+/** Converte il nostro JSON Schema nel formato schema di Gemini */
+function jsonSchemaToGemini(s) {
+  const out = {};
+  if (s.type) out.type = String(s.type).toUpperCase();
+  if (s.enum) out.enum = s.enum;
+  if (s.description) out.description = s.description;
+  if (s.required) out.required = s.required;
+  if (s.properties) {
+    out.properties = {};
+    for (const [k, v] of Object.entries(s.properties)) out.properties[k] = jsonSchemaToGemini(v);
+  }
+  if (s.items) out.items = jsonSchemaToGemini(s.items);
+  return out;
+}
+
+/** Chiamata IA unificata: blocks = [{type:"text",text}|{type:"image"|"pdf",media_type,data}] */
+async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
+  if (aiProvider() === "gemini") {
+    const parts = blocks.map((b) => b.type === "text"
+      ? { text: b.text }
+      : { inline_data: { mime_type: b.media_type, data: b.data } });
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": state.apiKey },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json",
+          responseSchema: jsonSchemaToGemini(schema),
+        },
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      const msg = err?.error?.message || "";
+      if (res.status === 400 && /api key/i.test(msg)) throw new Error("chiave Gemini non valida");
+      if (res.status === 429) throw new Error("limite gratuito Gemini raggiunto, riprova tra un minuto");
+      throw new Error(msg || "errore " + res.status);
+    }
+    const data = await res.json();
+    const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+    if (!text) throw new Error("risposta vuota da Gemini");
+    return JSON.parse(text);
+  }
+
+  // Anthropic
+  const content = blocks.map((b) => {
+    if (b.type === "text") return { type: "text", text: b.text };
+    return { type: b.type === "pdf" ? "document" : "image",
+      source: { type: "base64", media_type: b.media_type, data: b.data } };
+  });
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": state.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: maxTokens,
+      system,
+      output_config: { effort, format: { type: "json_schema", schema } },
+      messages: [{ role: "user", content }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    if (res.status === 401) throw new Error("chiave API non valida");
+    throw new Error(err?.error?.message || "errore " + res.status);
+  }
+  const data = await res.json();
+  if (data.stop_reason === "refusal") throw new Error("richiesta rifiutata");
+  const block = (data.content || []).find((b) => b.type === "text");
+  return JSON.parse(block.text);
+}
 
 const AI_SYSTEM = `Sei il motore di un diario alimentare italiano. Ricevi la trascrizione
 di un messaggio vocale in cui una persona racconta liberamente cosa ha mangiato o bevuto.
@@ -910,34 +1002,16 @@ const AI_SCHEMA = {
 
 async function aiParseFoodText(text) {
   const now = new Date();
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": state.apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      max_tokens: 2000,
-      system: AI_SYSTEM,
-      output_config: { effort: "low", format: { type: "json_schema", schema: AI_SCHEMA } },
-      messages: [{
-        role: "user",
-        content: `Ora attuale: ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}.\nTrascrizione: «${text}»`,
-      }],
-    }),
+  const parsed = await aiComplete({
+    system: AI_SYSTEM,
+    schema: AI_SCHEMA,
+    maxTokens: 2000,
+    effort: "low",
+    blocks: [{
+      type: "text",
+      text: `Ora attuale: ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}.\nTrascrizione: «${text}»`,
+    }],
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => null);
-    if (res.status === 401) throw new Error("chiave API non valida");
-    throw new Error(err?.error?.message || "errore " + res.status);
-  }
-  const data = await res.json();
-  if (data.stop_reason === "refusal") throw new Error("richiesta rifiutata");
-  const block = (data.content || []).find((b) => b.type === "text");
-  const parsed = JSON.parse(block.text);
   return (parsed.alimenti || []).map((a) => ({
     query: a.nome,
     meal: MEALS.some((m) => m.id === a.pasto) ? a.pasto : currentMealSlot(),
@@ -960,8 +1034,8 @@ function renderAiBox() {
   $("#aiKeyRow").classList.toggle("hidden", has);
   $("#aiRemoveKey").classList.toggle("hidden", !has);
   $("#aiStatus").innerHTML = has
-    ? "🤖 <strong>Modalità IA attiva</strong>: parla liberamente («stasera ho mangiato uno smash burger al ristorante…») e stimo tutto io, anche i valori dei piatti che non conosco."
-    : '🤖 Vuoi la <strong>modalità IA</strong>? Capisce il parlato libero e stima i valori dei piatti da ristorante. Crea una chiave API su <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> e incollala qui (resta salvata solo sul tuo dispositivo):';
+    ? `🤖 <strong>Modalità IA attiva</strong> (${aiProviderLabel()}): parla liberamente («stasera ho mangiato uno smash burger al ristorante…») e stimo tutto io. Vale anche per il Coach obiettivi.`
+    : '🤖 Vuoi la <strong>modalità IA</strong> (parlato libero + Coach potenziato)? <strong>Gratis</strong>: vai su <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con il tuo account Google, premi "Create API key" e incolla qui la chiave (inizia con AIza…). In alternativa una chiave Anthropic da <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. La chiave resta salvata solo sul tuo dispositivo:';
 }
 
 function saveAiKey() {
@@ -971,7 +1045,7 @@ function saveAiKey() {
   saveState();
   $("#aiKeyInput").value = "";
   renderAiBox();
-  toast("Modalità IA attivata 🤖");
+  toast(`Modalità IA attivata con ${aiProviderLabel()} 🤖`);
 }
 
 function removeAiKey() {
@@ -1693,51 +1767,28 @@ function coachPromptText(input) {
 }
 
 async function aiCoachAnalyze(input, files) {
-  const content = [];
+  const blocks = [];
   let extra = "";
   const attach = (file, label) => {
     if (!file) return;
-    if (file.kind === "image") {
-      content.push({ type: "image",
-        source: { type: "base64", media_type: file.media_type, data: file.data } });
-      extra += `\nIn allegato (immagine) ${label}: «${file.name}».`;
-    } else if (file.kind === "pdf") {
-      content.push({ type: "document",
-        source: { type: "base64", media_type: file.media_type, data: file.data } });
-      extra += `\nIn allegato (PDF) ${label}: «${file.name}».`;
+    if (file.kind === "image" || file.kind === "pdf") {
+      blocks.push({ type: file.kind, media_type: file.media_type, data: file.data });
+      extra += `\nIn allegato (${file.kind === "pdf" ? "PDF" : "immagine"}) ${label}: «${file.name}».`;
     } else if (file.kind === "text") {
       extra += `\n--- ${label} («${file.name}») ---\n${file.text}\n---`;
     }
   };
   attach(files.pliche, "il report della mia plicometria/misure");
   attach(files.diet, "la dieta che seguo attualmente");
-  content.push({ type: "text", text: coachPromptText(input) + extra });
+  blocks.push({ type: "text", text: coachPromptText(input) + extra });
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": state.apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      max_tokens: 3000,
-      system: AI_COACH_SYSTEM,
-      output_config: { effort: "medium", format: { type: "json_schema", schema: AI_COACH_SCHEMA } },
-      messages: [{ role: "user", content }],
-    }),
+  return aiComplete({
+    system: AI_COACH_SYSTEM,
+    schema: AI_COACH_SCHEMA,
+    maxTokens: 3000,
+    effort: "medium",
+    blocks,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => null);
-    if (res.status === 401) throw new Error("chiave API non valida");
-    throw new Error(err?.error?.message || "errore " + res.status);
-  }
-  const data = await res.json();
-  if (data.stop_reason === "refusal") throw new Error("richiesta rifiutata");
-  const block = (data.content || []).find((b) => b.type === "text");
-  return JSON.parse(block.text);
 }
 
 let coachTargetsCache = null;
@@ -1837,11 +1888,28 @@ function readCoachFile(sel) {
 
 /* --- Lettura locale dei dati extra: note e file devono incidere sui calcoli --- */
 
-/** Estrae vincoli e segnali dalle note libere (sonno, infortuni, soglia kcal, esclusioni) */
+/** Estrae vincoli e segnali dalle note libere (sonno, infortuni, soglia kcal,
+ *  esclusioni, pasti sgarro, fase indicata dal professionista) */
 function parseCoachNotes(text) {
-  const out = { sleep: null, injury: null, kcalFloor: null, exclusions: [] };
+  const out = { sleep: null, injury: null, kcalFloor: null, exclusions: [],
+    cheats: null, phase: null, cutMacros: false };
   if (!text) return out;
   const t = text.toLowerCase();
+
+  // Pasti sgarro/liberi: "2/3 pasti sgarri", "2-3 sgarri", "un pasto libero"
+  const gm = t.match(/(\d)\s*[\/\-–]\s*(\d)\s*(?:pasti\s+)?(?:sgarr\w+|liber\w+)/) ||
+             t.match(/(\d)\s*(?:pasti\s+)?(?:sgarr\w+|pasti\s+liber\w+)/) ||
+             (/un pasto (?:sgarro|libero)|uno sgarro/.test(t) ? [null, "1"] : null);
+  if (gm) out.cheats = Number(gm[2] || gm[1]);
+  else if (/sgarr|pasto libero|pasti liberi/.test(t)) out.cheats = 1;
+
+  // Fase indicata (es. dalla nutrizionista): mantenimento / cut / bulk
+  if (/mantenim|manten[ae]rmi|di mantenermi|solo mantenere/.test(t)) out.phase = "maintain";
+  else if (/(?:ora|adesso|fase di|sono in)\s+(?:cut|definizione)/.test(t)) out.phase = "cut";
+  else if (/(?:ora|adesso|fase di|sono in)\s+(?:bulk|massa)/.test(t)) out.phase = "bulk";
+
+  // "mi ha lasciato i macro del cut" e simili
+  if (/macro\s+(?:del|da|di)\s+cut|lasciat\w+\s+i\s+macro|stessi\s+macro/.test(t)) out.cutMacros = true;
   const sm = t.match(/dorm\w*[^\d]{0,12}(\d{1,2})(?:[-–](\d{1,2}))?\s*or[ae]/);
   if (sm) out.sleep = Number(sm[1]);
   const fm = t.match(/non\s+(?:scendere|andare)\s+sotto\s+(?:le|i|a)?\s*(\d{3,4})/) ||
@@ -1886,6 +1954,7 @@ async function runCoach() {
   const btn = $("#coachRun");
   btn.disabled = true;
   btn.textContent = state.apiKey ? "🤖 Il coach sta analizzando…" : "📖 Sto leggendo i tuoi dati…";
+  $("#coachResults").innerHTML = `<p class="hint">${state.apiKey ? "🤖 Analisi IA in corso…" : "📖 Analisi in corso…"}</p>`;
   try {
     const files = {
       pliche: await readCoachFile("#cPlicheFile"),
@@ -1955,7 +2024,31 @@ function localCoachView(input, files) {
   if (cons.exclusions.length) {
     extras.push({ level: "ok", text: `📎 Non mangi ${cons.exclusions.join(", ")}: nessun problema per i macro, copri le proteine con le alternative (uova, latticini, legumi, carne o pesce a seconda di cosa mangi).` });
   }
-  if (input.notes && !cons.kcalFloor && cons.sleep === null && !cons.injury && !cons.exclusions.length) {
+
+  // Fase indicata dal professionista vs obiettivo selezionato
+  if (cons.phase && cons.phase !== input.goal && !(cons.phase === "maintain" && input.goal === "recomp")) {
+    extras.push({ level: "warn", text: `📎 Nelle note racconti che ora la tua fase è «${GOAL_LABEL[cons.phase]}», ma qui sopra hai selezionato l'obiettivo «${GOAL_LABEL[input.goal]}»: l'analisi segue quello selezionato. Se la fase attuale è un'altra, cambia obiettivo e rilancia.` });
+  } else if (cons.phase) {
+    extras.push({ level: "ok", text: `📎 Ho letto che la tua fase attuale è «${GOAL_LABEL[cons.phase]}», coerente con l'obiettivo selezionato: analizzo su questa base.` });
+  }
+
+  // Pasti sgarro/liberi a settimana
+  if (cons.cheats) {
+    const lo = Math.round(cons.cheats * 400 / 7 / 10) * 10;
+    const hi = Math.round(cons.cheats * 800 / 7 / 10) * 10;
+    let text = `📎 Ho letto dei <strong>${cons.cheats} past${cons.cheats === 1 ? "o" : "i"} sgarro a settimana</strong>: in media valgono +400–800 kcal l'uno, cioè circa <strong>+${lo}–${hi} kcal/giorno</strong> sulla media settimanale. `;
+    if (cons.cutMacros && (cons.phase === "maintain" || input.goal === "maintain")) {
+      text += "Tenere i macro del cut nei giorni normali e aggiungere gli sgarri è una strategia sensata: gli sgarri colmano il deficit e di fatto ti tengono in mantenimento flessibile. Controlla il peso 1–2 volte a settimana: se scende ancora, aggiungi qualcosa nei giorni normali; se sale, togli uno sgarro.";
+    } else if (input.goal === "cut") {
+      text += `Occhio: con l'obiettivo «${GOAL_LABEL.cut}» quegli sgarri possono mangiarsi buona parte del deficit — tienili contenuti o riduci a 1.`;
+    } else {
+      text += "Con il tuo obiettivo ci stanno: l'importante è che la media settimanale resti vicina ai macro consigliati.";
+    }
+    extras.push({ level: input.goal === "cut" && cons.cheats > 1 ? "warn" : "ok", text });
+  }
+
+  if (input.notes && !cons.kcalFloor && cons.sleep === null && !cons.injury &&
+      !cons.exclusions.length && !cons.cheats && !cons.phase) {
     needAi.push("le tue note");
   }
 
@@ -1981,7 +2074,7 @@ function localCoachView(input, files) {
   }
 
   if (needAi.length) {
-    extras.push({ level: "warn", text: `Per leggere ${needAi.join(" e ")} in dettaglio (foto/PDF o testi complessi) serve la modalità IA 🤖: attivala con la chiave API nella dettatura vocale e rilancio l'analisi completa.` });
+    extras.push({ level: "warn", text: `Per capire ${needAi.join(" e ")} fino in fondo (foto/PDF o racconti articolati) serve la modalità IA 🤖 — si attiva <strong>gratis</strong> con una chiave Google Gemini da aistudio.google.com/apikey (la trovi nella dettatura vocale 🎤). Poi rilancia l'analisi e commento ogni cosa che hai scritto.` });
   }
 
   const checks = [...extras, ...coachChecks(input, targets)];
