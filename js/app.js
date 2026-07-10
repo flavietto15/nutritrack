@@ -866,15 +866,16 @@ function resolveGrams({ grams, count, measure }, food) {
 }
 
 /* --- Modalità IA: comprensione del parlato libero e analisi coach ---
-   Due provider, riconosciuti dal prefisso della chiave: Google Gemini
-   (chiave AIza…, creabile gratis su aistudio.google.com) o Anthropic
-   (chiave sk-ant-…). --- */
+   Due provider: Google Gemini (chiave creabile gratis su aistudio.google.com)
+   o Anthropic (chiave sk-ant-…). Il formato delle chiavi Google cambia nel
+   tempo (AIza…, AQ…), quindi l'unico prefisso su cui si può decidere è
+   quello Anthropic: sk-… → Anthropic, qualsiasi altra chiave → Gemini. --- */
 
 const AI_MODEL = "claude-opus-4-8";
 const GEMINI_MODEL = "gemini-2.5-flash";
 
 function aiProvider() {
-  return state.apiKey && state.apiKey.startsWith("AIza") ? "gemini" : "anthropic";
+  return state.apiKey && state.apiKey.startsWith("sk-") ? "anthropic" : "gemini";
 }
 
 function aiProviderLabel() {
@@ -1035,7 +1036,7 @@ function renderAiBox() {
   $("#aiRemoveKey").classList.toggle("hidden", !has);
   $("#aiStatus").innerHTML = has
     ? `🤖 <strong>Modalità IA attiva</strong> (${aiProviderLabel()}): parla liberamente («stasera ho mangiato uno smash burger al ristorante…») e stimo tutto io. Vale anche per il Coach obiettivi.`
-    : '🤖 Vuoi la <strong>modalità IA</strong> (parlato libero + Coach potenziato)? <strong>Gratis</strong>: vai su <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con il tuo account Google, premi "Create API key" e incolla qui la chiave (inizia con AIza…). In alternativa una chiave Anthropic da <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. La chiave resta salvata solo sul tuo dispositivo:';
+    : '🤖 Vuoi la <strong>modalità IA</strong> (parlato libero + Coach potenziato)? <strong>Gratis</strong>: vai su <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con il tuo account Google, premi "Create API key" e incolla qui la chiave. In alternativa una chiave Anthropic da <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. La chiave resta salvata solo sul tuo dispositivo:';
 }
 
 function saveAiKey() {
