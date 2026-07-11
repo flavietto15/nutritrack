@@ -653,7 +653,19 @@ async function searchOFF(query, signal) {
   return (data.products || []).map(offProductToFood).filter(Boolean);
 }
 
-function renderResults(items) {
+function renderResults(items, query = "") {
+  // Con la modalità IA attiva, qualsiasi cosa cercata (anche un piatto
+  // composto tipo "carbonara") può passare dal nutrizionista IA, che la
+  // scompone in ingredienti e stima le porzioni da ristorante.
+  const aiRow = query && state.apiKey ? `
+    <div class="result-row ai-ask" id="aiAskRow">
+      <span class="result-emoji">🤖</span>
+      <div class="result-info">
+        <div class="result-name">Chiedi al nutrizionista IA: «${esc(query)}»</div>
+        <div class="result-detail">scompone il piatto in ingredienti e stima le porzioni da ristorante</div>
+      </div>
+      <span class="result-src">IA</span>
+    </div>` : "";
   $("#searchResults").innerHTML = items.map((it, i) => `
     <div class="result-row" data-idx="${i}">
       <span class="result-emoji">${it.emoji}</span>
@@ -662,10 +674,22 @@ function renderResults(items) {
         <div class="result-detail">${r0(it.per100.kcal)} kcal · P ${r1(it.per100.p)} · C ${r1(it.per100.c)} · G ${r1(it.per100.f)} / 100 g</div>
       </div>
       <span class="result-src">${it.source}</span>
-    </div>`).join("");
-  $$(".result-row").forEach((row) =>
+    </div>`).join("") + aiRow;
+  $$(".result-row[data-idx]").forEach((row) =>
     row.addEventListener("click", () => openAmountModal(items[Number(row.dataset.idx)]))
   );
+  const ask = $("#aiAskRow");
+  if (ask) ask.addEventListener("click", () => askAiFromSearch(query));
+}
+
+/** Passa la query della ricerca manuale al nutrizionista IA (riusa la dettatura) */
+function askAiFromSearch(query) {
+  const meal = $("#addModal").dataset.meal || currentMealSlot();
+  const prefix = { colazione: "a colazione", pranzo: "a pranzo", spuntino: "come spuntino", cena: "a cena" }[meal] || "";
+  closeModal("addModal");
+  openVoiceModal();
+  $("#voiceText").value = `${prefix} ${query}`.trim();
+  analyzeVoiceText();
 }
 
 function onSearchInput() {
@@ -680,7 +704,7 @@ function onSearchInput() {
   }
 
   let items = searchLocal(q);
-  renderResults(items);
+  renderResults(items, q);
   $("#searchHint").textContent = "Cerco anche su Open Food Facts…";
 
   searchTimer = setTimeout(async () => {
@@ -690,7 +714,7 @@ function onSearchInput() {
       // Rileggi il campo: l'utente potrebbe aver già cambiato query
       if ($("#searchInput").value.trim() !== q) return;
       items = items.concat(off);
-      renderResults(items);
+      renderResults(items, q);
       $("#searchHint").textContent = off.length
         ? "Risultati: database locale + Open Food Facts."
         : "Nessun prodotto confezionato trovato online.";
@@ -1025,7 +1049,8 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
         temperature: 0,
         responseMimeType: "application/json",
         responseSchema: jsonSchemaToGemini(schema),
-        // dettatura: risposta immediata; coach: il modello ragiona prima di rispondere.
+        // effort "low" = risposta immediata; altrimenti il modello ragiona
+        // prima di rispondere (dettatura nutrizionista e coach).
         // Solo per la famiglia 2.5: i modelli più nuovi dietro gli alias
         // potrebbero non accettare questo parametro.
         ...(model.startsWith("gemini-2.5")
@@ -1097,33 +1122,53 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
   return JSON.parse(block.text);
 }
 
-const AI_SYSTEM = `Sei il motore di un diario alimentare italiano. Ricevi la trascrizione
-di un messaggio vocale in cui una persona racconta liberamente cosa ha mangiato o bevuto.
-Estrai SOLO gli alimenti e le bevande effettivamente consumati dalla persona, ignorando
-tutto il resto del discorso (luoghi, persone, commenti, divagazioni).
+const AI_SYSTEM = `Sei un nutrizionista professionista italiano, motore di un diario alimentare.
+Ricevi la trascrizione di un messaggio vocale in cui una persona racconta liberamente cosa ha
+mangiato o bevuto. Estrai SOLO gli alimenti e le bevande effettivamente consumati, ignorando il
+resto del discorso (luoghi, persone, commenti, divagazioni). Lavora con il rigore di una visita
+nutrizionale: stime accurate e realistiche, mai numeri di comodo arrotondati a 100 g.
 
-Piatti assemblati: se il piatto è fatto di componenti distinti (panino con pollo fritto,
-insalata con tonno e mais, piadina con crudo e squacquerone), restituisci UNA VOCE PER
-COMPONENTE (es. pane ~90 g, pollo fritto ~120 g, salsa ~20 g), così la persona può poi
-correggere il peso di ogni ingrediente separatamente. Restano una voce sola solo i piatti
-con ricetta fusa e inseparabile (lasagna, tiramisù, risotto, pizza).
+SCOMPOSIZIONE DEI PIATTI — regola centrale. OGNI piatto composto va scomposto in UNA VOCE PER
+INGREDIENTE, con il campo "piatto" uguale per tutte le voci di quel piatto:
+- pasta alla carbonara → pasta, guanciale, uova/tuorli, pecorino;
+- pizza margherita → impasto, passata di pomodoro, mozzarella, olio;
+- lasagna → sfoglia all'uovo, ragù, besciamella, parmigiano;
+- panino / piadina / insalatona / poke → pane o base + OGNI farcitura, salse comprese.
+Conta anche gli ingredienti "invisibili" che un ristoratore usa davvero: olio per soffriggere o
+condire, burro, zucchero nelle salse, pangrattato nelle panature. Restano una voce sola
+(piatto = "") solo gli alimenti semplici (una mela, una bistecca, uno yogurt) e le preparazioni
+davvero omogenee (frullato, purè, brodo, vellutata).
 
-Per ogni voce:
-- quantità: se la persona conta i pezzi ("2 fagottini", "tre biscotti"), compila "pezzi"
-  e stima in "grammi_a_pezzo" il peso realistico di UN pezzo, facendo attenzione al
-  formato: «mini» o «mignon» pesa circa la metà del formato normale (mini fagottino o
-  mini cornetto ≈ 25 g, fagottino/cornetto normale ≈ 50-60 g, biscotto ≈ 8-12 g,
-  cioccolatino ≈ 10 g, polpetta ≈ 30-40 g, pezzo di sushi ≈ 25-35 g); in "grammi" metti
-  il totale = pezzi × grammi_a_pezzo. Se non ci sono pezzi contati metti pezzi = 0 e
-  grammi_a_pezzo = 0, e in "grammi" la porzione: rispetta le quantità dette dall'utente,
-  altrimenti usa porzioni tipiche italiane o da ristorante (uno smash burger ≈ 250 g,
-  una porzione di patatine fritte ≈ 150 g, un piatto di pasta cotta ≈ 300 g). Non
-  gonfiare i pesi: meglio la porzione tipica che un valore arrotondato a 100 g.
-- stima i valori nutrizionali medi per 100 g (kcal, proteine, carboidrati, grassi) da
-  fonti standard tipo CREA/USDA;
-- assegna il pasto usando i riferimenti nel testo ("stasera" → cena, "stamattina" →
-  colazione, "a pranzo" → pranzo); senza riferimenti, deducilo dall'ora attuale indicata;
-  i componenti dello stesso piatto vanno nello stesso pasto.
+QUANTITÀ — in ordine di priorità:
+1. Peso detto dall'utente per quell'ingrediente: vincolante, non modificarlo mai.
+2. Peso detto solo per UN ingrediente del piatto ("100 g di pasta alla carbonara", "250 g di
+   impasto per la pizza"): usalo come ÀNCORA. Fissa quell'ingrediente e ricava TUTTI gli altri
+   in proporzione dalle ricette reali di ristorazione (es. carbonara per 100 g di pasta secca:
+   guanciale ≈ 35 g, uova/tuorli ≈ 45 g, pecorino ≈ 18 g; pizza per 250 g di impasto:
+   pomodoro ≈ 90 g, mozzarella ≈ 90 g, olio ≈ 10 g).
+3. Nessuna quantità: ragiona come se avessi pesato quel piatto in un campione enorme di
+   ristoranti, trattorie e pizzerie italiane. Per ogni ingrediente stima il peso MEDIANO
+   davvero servito dai ristoratori e usa quello (es. carbonara al ristorante ≈ 110-130 g di
+   pasta secca; lasagna ≈ 300-380 g totali; patatine fritte ≈ 150 g; smash burger ≈ 250 g
+   totali). L'obiettivo è avvicinarsi il più possibile a ciò che finisce davvero nel piatto.
+
+PEZZI: se la persona conta i pezzi ("2 fagottini", "tre biscotti"), compila "pezzi" e stima in
+"grammi_a_pezzo" il peso realistico di UN pezzo, facendo attenzione al formato: «mini» o
+«mignon» pesa circa la metà del formato normale (mini fagottino o mini cornetto ≈ 25 g,
+fagottino/cornetto normale ≈ 50-60 g, biscotto ≈ 8-12 g, cioccolatino ≈ 10 g, polpetta
+≈ 30-40 g, pezzo di sushi ≈ 25-35 g); in "grammi" metti il totale = pezzi × grammi_a_pezzo.
+Se non ci sono pezzi contati metti pezzi = 0 e grammi_a_pezzo = 0.
+
+CRUDO/COTTO: se l'utente dà il peso di pasta o riso ("80 g di pasta") intende il peso a crudo:
+usa i valori per 100 g del crudo. Se stimi tu un piatto già pronto puoi ragionare da cotto, ma
+i valori per 100 g devono riferirsi SEMPRE allo stesso stato del peso indicato in "grammi".
+
+VALORI: per ogni voce stima kcal, proteine, carboidrati e grassi medi per 100 g da fonti
+standard (CREA/USDA), riferiti all'ingrediente così com'è nel piatto.
+
+PASTO: usa i riferimenti nel testo ("stasera" → cena, "stamattina" → colazione, "a pranzo" →
+pranzo); senza riferimenti, deducilo dall'ora attuale indicata; tutte le voci dello stesso
+piatto vanno nello stesso pasto.
 Non inventare alimenti non menzionati. Se non ci sono alimenti, restituisci la lista vuota.`;
 
 const AI_SCHEMA = {
@@ -1136,9 +1181,10 @@ const AI_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["nome", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
+        required: ["nome", "piatto", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
         properties: {
           nome: { type: "string", description: "Nome breve dell'alimento in italiano" },
+          piatto: { type: "string", description: "Nome del piatto composto di cui questa voce è un ingrediente (es. 'Carbonara'); stringa vuota se l'alimento è a sé" },
           pasto: { type: "string", enum: ["colazione", "pranzo", "spuntino", "cena"] },
           pezzi: { type: "number", description: "Numero di pezzi contati dalla persona; 0 se non conta a pezzi" },
           grammi_a_pezzo: { type: "number", description: "Peso realistico di un singolo pezzo in grammi; 0 se non conta a pezzi" },
@@ -1158,8 +1204,10 @@ async function aiParseFoodText(text) {
   const parsed = await aiComplete({
     system: AI_SYSTEM,
     schema: AI_SCHEMA,
-    maxTokens: 2000,
-    effort: "low",
+    maxTokens: 3000,
+    // il nutrizionista ragiona prima di pesare: scomposizione e proporzioni
+    // richiedono il thinking attivo, come per il coach
+    effort: "high",
     blocks: [{
       type: "text",
       text: `Ora attuale: ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}.\nTrascrizione: «${text}»`,
@@ -1171,10 +1219,15 @@ async function aiParseFoodText(text) {
     const pieces = Math.max(0, Math.round(a.pezzi || 0));
     const perPiece = Math.max(0, Math.round(a.grammi_a_pezzo || 0));
     const byPieces = pieces > 0 && perPiece > 0;
+    const grams = Math.max(1, byPieces ? pieces * perPiece : Math.round(a.grammi));
     return {
       query: a.nome,
+      dish: (a.piatto || "").trim(),
       meal: MEALS.some((m) => m.id === a.pasto) ? a.pasto : currentMealSlot(),
-      grams: Math.max(1, byPieces ? pieces * perPiece : Math.round(a.grammi)),
+      grams,
+      // peso stimato in origine: serve a riproporzionare gli altri
+      // ingredienti del piatto quando l'utente ne corregge uno
+      origGrams: grams,
       pieces: byPieces ? { n: pieces, g: perPiece } : null,
       food: {
         name: a.nome,
@@ -1195,7 +1248,7 @@ function renderAiBox() {
   $("#aiKeyRow").classList.toggle("hidden", has);
   $("#aiRemoveKey").classList.toggle("hidden", !has);
   $("#aiStatus").innerHTML = has
-    ? `🤖 <strong>Modalità IA attiva</strong> (${aiProviderLabel()}): parla liberamente («stasera ho mangiato uno smash burger al ristorante…») e stimo tutto io. Vale anche per il Coach obiettivi.`
+    ? `🤖 <strong>Modalità IA attiva</strong> (${aiProviderLabel()}): parla liberamente («100 g di pasta alla carbonara…») e faccio da nutrizionista: scompongo ogni piatto nei suoi ingredienti, rispetto i pesi che mi dai (anche solo quello della pasta o della base) e per il resto uso le porzioni medie servite dai ristoranti. Vale anche per il Coach obiettivi.`
     : '🤖 Vuoi la <strong>modalità IA</strong> (parlato libero + Coach potenziato)? <strong>Gratis</strong>: vai su <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con il tuo account Google, premi "Create API key" e incolla qui la chiave. In alternativa una chiave Anthropic da <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. La chiave resta salvata solo sul tuo dispositivo:';
 }
 
@@ -1274,7 +1327,7 @@ async function analyzeVoiceText() {
   // Con la chiave API: comprensione IA del parlato libero
   voiceAiError = "";
   if (state.apiKey) {
-    $("#voiceParsed").innerHTML = `<p class="hint">🤖 Sto analizzando quello che hai detto…</p>`;
+    $("#voiceParsed").innerHTML = `<p class="hint">🤖 Il nutrizionista IA sta ragionando: scompone i piatti e pesa ogni ingrediente…</p>`;
     $("#voiceAddAll").classList.add("hidden");
     try {
       voiceItems = await aiParseFoodText(text);
@@ -1323,12 +1376,36 @@ function voiceAiErrorHtml() {
     questi risultati vengono dal riconoscimento base.</p>`;
 }
 
+/** Testo riassuntivo di una voce (mostra i pezzi solo finché il totale coincide) */
+function vpDetail(it) {
+  const n = it.food.per100;
+  const showPieces = it.pieces && it.grams === it.pieces.n * it.pieces.g;
+  return `${showPieces ? `${it.pieces.n} pz × ${it.pieces.g} g · ` : ""}${r0(n.kcal * it.grams / 100)} kcal · P ${r0(n.p * it.grams / 100)} g`;
+}
+
+let voiceDishNames = []; // indice gruppo → nome piatto, per aggiornare i totali
+
+function refreshDishTotals() {
+  $$("#voiceParsed [data-dishtotal]").forEach((span) => {
+    const dish = voiceDishNames[Number(span.dataset.dishtotal)];
+    let kcal = 0, p = 0;
+    for (const it of voiceItems) {
+      if (it.food && (it.dish || "") === dish) {
+        kcal += it.food.per100.kcal * it.grams / 100;
+        p += it.food.per100.p * it.grams / 100;
+      }
+    }
+    span.textContent = `${r0(kcal)} kcal · P ${r0(p)} g`;
+  });
+}
+
 function renderVoicePreview() {
   const el = $("#voiceParsed");
-  el.innerHTML = voiceAiErrorHtml() + voiceItems.map((it, i) => {
+
+  const rowHtml = (it, i, sub) => {
     if (!it.food) {
       return `
-        <div class="vp-row">
+        <div class="vp-row${sub}">
           <span class="vp-emoji">❓</span>
           <div class="vp-info">
             <div class="vp-name">${esc(it.query)}</div>
@@ -1338,24 +1415,57 @@ function renderVoicePreview() {
           <button class="vp-x" data-vremove="${i}" title="Rimuovi">✕</button>
         </div>`;
     }
-    const n = {
-      kcal: it.food.per100.kcal * it.grams / 100,
-      p: it.food.per100.p * it.grams / 100,
-    };
     const opts = MEALS.map((m) =>
       `<option value="${m.id}" ${m.id === it.meal ? "selected" : ""}>${m.emoji} ${m.label}</option>`).join("");
     return `
-      <div class="vp-row">
+      <div class="vp-row${sub}">
         <span class="vp-emoji">${it.food.emoji}</span>
         <div class="vp-info">
           <div class="vp-name">${esc(it.food.name)}</div>
-          <div class="vp-detail">${it.pieces ? `${it.pieces.n} pz × ${it.pieces.g} g · ` : ""}${r0(n.kcal)} kcal · P ${r0(n.p)} g</div>
+          <div class="vp-detail">${vpDetail(it)}</div>
         </div>
         <input type="number" class="input vp-grams" data-vgrams="${i}" value="${it.grams}" min="1">
         <select class="input vp-meal" data-vmeal="${i}">${opts}</select>
         <button class="vp-x" data-vremove="${i}" title="Rimuovi">✕</button>
       </div>`;
+  };
+
+  // Raggruppa gli ingredienti dello stesso piatto sotto un'intestazione
+  const groups = [];
+  const byDish = new Map();
+  voiceItems.forEach((it, i) => {
+    const dish = it.food && it.dish ? it.dish : "";
+    if (dish) {
+      if (!byDish.has(dish)) {
+        const g = { dish, rows: [] };
+        byDish.set(dish, g);
+        groups.push(g);
+      }
+      byDish.get(dish).rows.push(i);
+    } else {
+      groups.push({ dish: "", rows: [i] });
+    }
+  });
+
+  voiceDishNames = [];
+  let hasDish = false;
+  const html = groups.map((g) => {
+    if (g.dish && g.rows.length > 1) {
+      hasDish = true;
+      const gi = voiceDishNames.push(g.dish) - 1;
+      return `
+        <div class="vp-dish">
+          <span class="vp-dish-name">🍽️ ${esc(g.dish)}</span>
+          <span class="vp-dish-total" data-dishtotal="${gi}"></span>
+        </div>` +
+        g.rows.map((i) => rowHtml(voiceItems[i], i, " vp-sub")).join("");
+    }
+    return g.rows.map((i) => rowHtml(voiceItems[i], i, "")).join("");
   }).join("");
+
+  el.innerHTML = voiceAiErrorHtml() + html +
+    (hasDish ? `<p class="vp-scale-hint">⚖️ Piatto scomposto dal nutrizionista IA: correggi il peso di un ingrediente (es. la pasta) e riproporziono gli altri.</p>` : "");
+  refreshDishTotals();
 
   const found = voiceItems.filter((it) => it.food).length;
   $("#voiceAddAll").classList.toggle("hidden", !found);
@@ -1364,12 +1474,27 @@ function renderVoicePreview() {
   fx.staggerList($$("#voiceParsed .vp-row"));
 
   $$("[data-vgrams]").forEach((inp) => inp.addEventListener("input", () => {
-    const it = voiceItems[Number(inp.dataset.vgrams)];
+    const i = Number(inp.dataset.vgrams);
+    const it = voiceItems[i];
     it.grams = Math.max(1, Number(inp.value) || 1);
     it.gramsEdited = true;
-    const n = it.food.per100;
-    inp.parentElement.querySelector(".vp-detail").textContent =
-      `${r0(n.kcal * it.grams / 100)} kcal · P ${r0(n.p * it.grams / 100)} g`;
+    inp.parentElement.querySelector(".vp-detail").textContent = vpDetail(it);
+    // Nutrizionista: gli altri ingredienti del piatto seguono in proporzione,
+    // tranne quelli già corretti a mano e quelli contati a pezzi.
+    if (it.dish && it.origGrams) {
+      const factor = it.grams / it.origGrams;
+      voiceItems.forEach((sib, j) => {
+        if (j === i || !sib.food || (sib.dish || "") !== it.dish) return;
+        if (sib.gramsEdited || sib.pieces || !sib.origGrams) return;
+        sib.grams = Math.max(1, Math.round(sib.origGrams * factor));
+        const sInp = $(`[data-vgrams="${j}"]`);
+        if (sInp) {
+          sInp.value = sib.grams;
+          sInp.parentElement.querySelector(".vp-detail").textContent = vpDetail(sib);
+        }
+      });
+    }
+    refreshDishTotals();
   }));
   $$("[data-vmeal]").forEach((sel) => sel.addEventListener("change", () => {
     voiceItems[Number(sel.dataset.vmeal)].meal = sel.value;
@@ -1391,7 +1516,9 @@ function addAllVoiceItems() {
   const found = voiceItems.filter((it) => it.food);
   if (!found.length) return;
   for (const it of found) {
-    addEntry({ meal: it.meal, name: it.food.name, grams: it.grams, per100: it.food.per100 });
+    // gli ingredienti di un piatto scomposto restano riconoscibili nel diario
+    const name = it.dish && it.dish !== it.food.name ? `${it.dish} · ${it.food.name}` : it.food.name;
+    addEntry({ meal: it.meal, name, grams: it.grams, per100: it.food.per100 });
   }
   closeModal("voiceModal");
   toast(`${found.length} ${found.length === 1 ? "voce aggiunta" : "voci aggiunte"} al diario 🎤`);
