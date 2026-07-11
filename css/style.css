@@ -328,9 +328,22 @@ body {
 }
 .vp-emoji { font-size: 18px; flex-shrink: 0; width: 24px; text-align: center; }
 .vp-info { flex: 1; min-width: 0; }
-.vp-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; min-width: 0; }
+.vp-name-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vp-detail { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .vp-miss { color: var(--danger); }
+.vp-tag {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.vp-tag-ok { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.vp-tag-est { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--ink-2); }
+.vp-tag-wait { background: color-mix(in srgb, var(--kcal) 14%, transparent); color: var(--kcal); }
 .vp-row .vp-grams { width: 60px; padding: 6px 4px; text-align: center; flex-shrink: 0; }
 .vp-row .vp-meal { width: 88px; padding: 6px 2px; font-size: 12px; flex-shrink: 0; }
 .vp-x {

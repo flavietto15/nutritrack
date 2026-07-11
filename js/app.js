@@ -653,6 +653,25 @@ async function searchOFF(query, signal) {
   return (data.products || []).map(offProductToFood).filter(Boolean);
 }
 
+/** Come searchOFF ma conserva nome prodotto e marca separati, per il match sulla marca */
+async function searchOFFRaw(query, signal) {
+  const url = "https://it.openfoodfacts.org/cgi/search.pl?search_simple=1&action=process&json=1&page_size=10" +
+    "&fields=product_name,brands,nutriments,serving_quantity&search_terms=" + encodeURIComponent(query);
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  return (data.products || []).map((prod) => {
+    const food = offProductToFood(prod);
+    if (!food) return null;
+    return {
+      productName: prod.product_name || "",
+      brand: (prod.brands || "").split(",")[0].trim(),
+      per100: food.per100,
+      portion: food.portion,
+    };
+  }).filter(Boolean);
+}
+
 function renderResults(items, query = "") {
   // Con la modalità IA attiva, qualsiasi cosa cercata (anche un piatto
   // composto tipo "carbonara") può passare dal nutrizionista IA, che la
@@ -1163,6 +1182,17 @@ CRUDO/COTTO: se l'utente dà il peso di pasta o riso ("80 g di pasta") intende i
 usa i valori per 100 g del crudo. Se stimi tu un piatto già pronto puoi ragionare da cotto, ma
 i valori per 100 g devono riferirsi SEMPRE allo stesso stato del peso indicato in "grammi".
 
+MARCHE — per avere macro precisi e non stimati. Se una voce è un prodotto confezionato di
+marca (biscotti, merendine, yogurt di marca, cereali, barrette, snack, creme spalmabili,
+bevande in lattina/bottiglia, salumi confezionati, formaggini…), metti "confezionato" a true e
+in "marca" il nome della marca. Usa la marca che dice l'utente; se cita un prodotto che di
+fatto È una marca ("nutella", "philadelphia", "gocciole", "pan di stelle", "fonzies") deduci
+la marca più probabile (Nutella→Ferrero, Philadelphia→Kraft, Gocciole/Pan di stelle→Mulino
+Bianco o Pavesi, ecc.) e metti in "nome" il prodotto ("Nutella", "Gocciole"). Per alimenti
+freschi o sfusi (mela, petto di pollo, pane del fornaio) e per gli ingredienti dei piatti di
+ristorante lascia "marca" vuota e "confezionato" a false. Anche quando marchi un prodotto,
+compila comunque i valori stimati per 100 g: sono la riserva se la marca non si trova online.
+
 VALORI: per ogni voce stima kcal, proteine, carboidrati e grassi medi per 100 g da fonti
 standard (CREA/USDA), riferiti all'ingrediente così com'è nel piatto.
 
@@ -1181,9 +1211,11 @@ const AI_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["nome", "piatto", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
+        required: ["nome", "marca", "confezionato", "piatto", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
         properties: {
           nome: { type: "string", description: "Nome breve dell'alimento in italiano" },
+          marca: { type: "string", description: "Marca del prodotto confezionato (es. 'Ferrero', 'Mulino Bianco'); stringa vuota per alimenti freschi/sfusi o piatti di ristorante" },
+          confezionato: { type: "boolean", description: "true se è un prodotto industriale di marca con ricetta fissa (per cui cercare i macro reali online)" },
           piatto: { type: "string", description: "Nome del piatto composto di cui questa voce è un ingrediente (es. 'Carbonara'); stringa vuota se l'alimento è a sé" },
           pasto: { type: "string", enum: ["colazione", "pranzo", "spuntino", "cena"] },
           pezzi: { type: "number", description: "Numero di pezzi contati dalla persona; 0 se non conta a pezzi" },
@@ -1220,9 +1252,17 @@ async function aiParseFoodText(text) {
     const perPiece = Math.max(0, Math.round(a.grammi_a_pezzo || 0));
     const byPieces = pieces > 0 && perPiece > 0;
     const grams = Math.max(1, byPieces ? pieces * perPiece : Math.round(a.grammi));
+    const brand = (a.marca || "").trim();
+    // solo i prodotti di marca a sé stanti (non gli ingredienti di un piatto)
+    // vengono raffinati con i macro reali di Open Food Facts
+    const packaged = Boolean(a.confezionato) && !(a.piatto || "").trim();
     return {
       query: a.nome,
       dish: (a.piatto || "").trim(),
+      brand,
+      packaged,
+      brandPending: packaged,   // in attesa del lookup online
+      exact: false,             // true quando i macro vengono dalla marca reale
       meal: MEALS.some((m) => m.id === a.pasto) ? a.pasto : currentMealSlot(),
       grams,
       // peso stimato in origine: serve a riproporzionare gli altri
@@ -1230,8 +1270,8 @@ async function aiParseFoodText(text) {
       origGrams: grams,
       pieces: byPieces ? { n: pieces, g: perPiece } : null,
       food: {
-        name: a.nome,
-        emoji: "🤖",
+        name: brand && !normalize(a.nome).includes(normalize(brand)) ? `${a.nome} · ${brand}` : a.nome,
+        emoji: packaged ? "📦" : "🤖",
         per100: {
           kcal: Math.max(0, a.kcal_100g),
           p: Math.max(0, a.proteine_100g),
@@ -1243,12 +1283,61 @@ async function aiParseFoodText(text) {
   });
 }
 
+/* --- Macro precisi dalla marca reale (Open Food Facts) ---
+   Per ogni voce di marca cerca il prodotto su OFF e, se lo trova con buona
+   corrispondenza, sostituisce i macro stimati con quelli reali. Progressivo:
+   l'anteprima è già visibile con le stime, le righe si aggiornano man mano. */
+async function refineBrandedMacros() {
+  const targets = voiceItems.filter((it) => it.packaged && it.brandPending);
+  if (!targets.length) return;
+  await Promise.allSettled(targets.map(async (it) => {
+    try {
+      const match = await lookupBrandProduct(it.query, it.brand);
+      if (match) {
+        it.food.per100 = match.per100;
+        it.food.name = match.name;
+        it.exact = true;
+      }
+    } catch (_) { /* offline o CSP: resta la stima IA */ }
+    finally { it.brandPending = false; }
+  }));
+  // le voci potrebbero non essere più a schermo (modale chiusa): guardia
+  if ($("#voiceModal") && !$("#voiceModal").classList.contains("hidden")) renderVoicePreview();
+}
+
+/** Cerca su OFF il prodotto «marca nome» e restituisce il miglior riscontro */
+async function lookupBrandProduct(name, brand) {
+  const query = [brand, name].filter(Boolean).join(" ");
+  const prods = await searchOFFRaw(query);
+  if (!prods.length) return null;
+  const nameTokens = normalize(name).split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+  const brandTokens = normalize(brand).split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+  let best = null;
+  for (const p of prods) {
+    const pn = normalize(p.productName);
+    const pb = normalize(p.brand || "");
+    const pTokens = new Set(pn.split(/[^a-z0-9]+/).filter(Boolean));
+    const nameHits = nameTokens.filter((t) => pTokens.has(t)).length;
+    const nameScore = nameTokens.length ? nameHits / nameTokens.length : 0;
+    const brandHit = brandTokens.length > 0 && brandTokens.some((b) => pb.includes(b) || pn.includes(b));
+    // marca giusta + metà nome, oppure nome molto coincidente senza marca certa
+    const ok = (brandHit && nameScore >= 0.5) || nameScore >= 0.75;
+    if (!ok) continue;
+    const score = nameScore + (brandHit ? 1 : 0);
+    if (!best || score > best.score) best = { score, prod: p };
+  }
+  if (!best) return null;
+  const p = best.prod;
+  const label = [p.productName, p.brand].filter(Boolean).join(" · ");
+  return { name: label, per100: p.per100, portion: p.portion };
+}
+
 function renderAiBox() {
   const has = Boolean(state.apiKey);
   $("#aiKeyRow").classList.toggle("hidden", has);
   $("#aiRemoveKey").classList.toggle("hidden", !has);
   $("#aiStatus").innerHTML = has
-    ? `🤖 <strong>Modalità IA attiva</strong> (${aiProviderLabel()}): parla liberamente («100 g di pasta alla carbonara…») e faccio da nutrizionista: scompongo ogni piatto nei suoi ingredienti, rispetto i pesi che mi dai (anche solo quello della pasta o della base) e per il resto uso le porzioni medie servite dai ristoranti. Vale anche per il Coach obiettivi.`
+    ? `🤖 <strong>Modalità IA attiva</strong> (${aiProviderLabel()}): parla liberamente («100 g di pasta alla carbonara…») e faccio da nutrizionista: scompongo ogni piatto nei suoi ingredienti, rispetto i pesi che mi dai (anche solo quello della pasta o della base) e per il resto uso le porzioni medie servite dai ristoranti. Per i prodotti di marca prendo i macro reali da Open Food Facts, non una stima. Vale anche per il Coach obiettivi.`
     : '🤖 Vuoi la <strong>modalità IA</strong> (parlato libero + Coach potenziato)? <strong>Gratis</strong>: vai su <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con il tuo account Google, premi "Create API key" e incolla qui la chiave. In alternativa una chiave Anthropic da <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. La chiave resta salvata solo sul tuo dispositivo:';
 }
 
@@ -1336,6 +1425,8 @@ async function analyzeVoiceText() {
         return;
       }
       renderVoicePreview();
+      // prodotti di marca: cerca i macro reali su Open Food Facts (in background)
+      refineBrandedMacros();
       return;
     } catch (err) {
       // l'errore resta visibile nell'anteprima, non solo in un toast che sparisce
@@ -1383,6 +1474,14 @@ function vpDetail(it) {
   return `${showPieces ? `${it.pieces.n} pz × ${it.pieces.g} g · ` : ""}${r0(n.kcal * it.grams / 100)} kcal · P ${r0(n.p * it.grams / 100)} g`;
 }
 
+/** Badge sulla fonte dei macro di una voce di marca */
+function vpBadge(it) {
+  if (it.brandPending) return `<span class="vp-tag vp-tag-wait">marca…</span>`;
+  if (it.exact) return `<span class="vp-tag vp-tag-ok">✓ marca</span>`;
+  if (it.packaged) return `<span class="vp-tag vp-tag-est">≈ stima</span>`;
+  return "";
+}
+
 let voiceDishNames = []; // indice gruppo → nome piatto, per aggiornare i totali
 
 function refreshDishTotals() {
@@ -1421,7 +1520,7 @@ function renderVoicePreview() {
       <div class="vp-row${sub}">
         <span class="vp-emoji">${it.food.emoji}</span>
         <div class="vp-info">
-          <div class="vp-name">${esc(it.food.name)}</div>
+          <div class="vp-name"><span class="vp-name-txt">${esc(it.food.name)}</span>${vpBadge(it)}</div>
           <div class="vp-detail">${vpDetail(it)}</div>
         </div>
         <input type="number" class="input vp-grams" data-vgrams="${i}" value="${it.grams}" min="1">
