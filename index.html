@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
   <title>NutriTrack — Diario calorie e macro</title>
-  <link rel="stylesheet" href="css/style.css?v=13">
+  <link rel="stylesheet" href="css/style.css?v=14">
 </head>
 <body>
 
@@ -323,6 +323,19 @@
       </div>
 
       <button class="btn primary full" id="saveGoals">Salva obiettivi</button>
+
+      <div class="backup-box hidden" id="backupBox">
+        <p class="gsection">💾 Backup dei dati</p>
+        <p class="hint">I tuoi dati vivono solo su questo dispositivo. Esportali ogni tanto: se
+          cambi telefono o cancelli la cronologia del browser, il diario andrebbe perso. Il file
+          non contiene la tua chiave API.</p>
+        <div class="row">
+          <button class="btn" id="exportData">⬇️ Esporta</button>
+          <button class="btn" id="importData">⬆️ Importa</button>
+        </div>
+        <input type="file" id="importFile" accept="application/json,.json" class="hidden">
+        <p class="hint" id="backupStatus"></p>
+      </div>
     </div>
   </div>
 
@@ -470,8 +483,8 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/vendor/motion.js?v=13"></script>
-  <script src="js/foods.js?v=13"></script>
-  <script src="js/app.js?v=13"></script>
+  <script src="js/vendor/motion.js?v=14"></script>
+  <script src="js/foods.js?v=14"></script>
+  <script src="js/app.js?v=14"></script>
 </body>
 </html>

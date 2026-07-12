@@ -602,6 +602,18 @@ body {
 .row.center { justify-content: center; }
 .hint { font-size: 12px; color: var(--muted); }
 .gsection { font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.backup-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.backup-box .row { gap: 8px; }
+.backup-box .btn { flex: 1; }
 .switch-row {
   display: flex;
   align-items: center;

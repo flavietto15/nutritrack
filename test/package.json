@@ -1,0 +1,12 @@
+{
+  "name": "nutritrack-test",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Test end-to-end di NutriTrack (Playwright).",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.40.0"
+  }
+}

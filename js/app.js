@@ -49,6 +49,102 @@ function saveState() {
   } catch (_) { /* storage pieno o bloccato: l'app continua in memoria */ }
 }
 
+/* ---------- Backup: esporta / importa i dati ----------
+   I dati vivono solo nel localStorage del dispositivo: senza un backup
+   basta cambiare telefono o svuotare la cronologia per perdere tutto.
+   La chiave API NON viene mai esportata (resta solo sul dispositivo). */
+
+function backupPayload() {
+  return {
+    app: "nutritrack",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      goals: state.goals,
+      profile: state.profile,
+      trainingGoals: state.trainingGoals,
+      days: state.days || {},
+      trainingDays: state.trainingDays || {},
+    },
+  };
+}
+
+function exportData() {
+  try {
+    const json = JSON.stringify(backupPayload(), null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nutritrack-backup-${todayKey()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const nDays = Object.keys(state.days || {}).length;
+    $("#backupStatus").textContent = `✅ Backup scaricato: ${nDays} ${nDays === 1 ? "giorno" : "giorni"} di diario. Conservalo al sicuro.`;
+    toast("Backup dei dati scaricato 💾");
+  } catch (err) {
+    $("#backupStatus").textContent = `⚠️ Non sono riuscito a esportare: ${err.message}`;
+  }
+}
+
+/** Conta le voci (pasti) in una mappa giorno→array */
+function countEntries(days) {
+  return Object.values(days || {}).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
+}
+
+function importData(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch (_) {
+      $("#backupStatus").textContent = "⚠️ File non valido: non è un backup NutriTrack (JSON illeggibile).";
+      return;
+    }
+    const d = parsed && parsed.data ? parsed.data : parsed;
+    if (!d || typeof d !== "object" || (typeof d.days !== "object" && !d.goals)) {
+      $("#backupStatus").textContent = "⚠️ Questo file non sembra un backup di NutriTrack.";
+      return;
+    }
+    // Fusione NON distruttiva: i giorni si uniscono, per una data presente in
+    // entrambi si tiene la versione con più voci; obiettivi/profilo si riempiono
+    // solo se qui mancano. Così un import non cancella mai i dati già presenti.
+    let added = 0;
+    const mergeDays = (target, incoming) => {
+      for (const [date, entries] of Object.entries(incoming || {})) {
+        if (!Array.isArray(entries)) continue;
+        const cur = target[date];
+        if (!Array.isArray(cur) || entries.length > cur.length) {
+          if (!cur) added++;
+          target[date] = entries;
+        }
+      }
+    };
+    if (!state.days) state.days = {};
+    if (!state.trainingDays) state.trainingDays = {};
+    const before = countEntries(state.days);
+    mergeDays(state.days, d.days);
+    mergeDays(state.trainingDays, d.trainingDays);
+    if (!state.goals && d.goals) state.goals = d.goals;
+    if (!state.profile && d.profile) state.profile = d.profile;
+    if (!state.trainingGoals && d.trainingGoals) state.trainingGoals = d.trainingGoals;
+    const gained = countEntries(state.days) - before;
+
+    saveState();
+    render();
+    renderAiBox();
+    $("#backupStatus").textContent = added || gained
+      ? `✅ Backup importato: ${added} ${added === 1 ? "giorno aggiunto" : "giorni aggiunti"}, ${Math.max(0, gained)} voci recuperate.`
+      : "✅ Backup letto: i dati erano già tutti presenti, niente da aggiungere.";
+    toast("Dati importati dal backup 💾");
+  };
+  reader.onerror = () => { $("#backupStatus").textContent = "⚠️ Non sono riuscito a leggere il file."; };
+  reader.readAsText(file);
+}
+
 /* ---------- Utility ---------- */
 
 const $ = (sel) => document.querySelector(sel);
@@ -1744,6 +1840,9 @@ function updateGoalsCheck() {
 function openGoalsModal() {
   const isFirstRun = !state.goals;
   $("#goalsClose").classList.toggle("hidden", isFirstRun);
+  // il backup ha senso solo quando c'è già qualcosa da salvare
+  $("#backupBox").classList.toggle("hidden", isFirstRun);
+  $("#backupStatus").textContent = "";
   if (state.goals) fillCustomGoals(state.goals);
   if (state.profile) {
     $("#pSex").value = state.profile.sex;
@@ -2951,6 +3050,14 @@ function init() {
   });
   $("#dayTypeToggle").addEventListener("click", toggleDayType);
   $("#saveGoals").addEventListener("click", saveGoals);
+
+  // Backup dati (esporta / importa)
+  $("#exportData").addEventListener("click", exportData);
+  $("#importData").addEventListener("click", () => $("#importFile").click());
+  $("#importFile").addEventListener("change", (e) => {
+    if (e.target.files[0]) importData(e.target.files[0]);
+    e.target.value = ""; // permette di reimportare lo stesso file
+  });
 
   // Allenamento
   $("#openWorkout").addEventListener("click", () => openWorkoutModal());
