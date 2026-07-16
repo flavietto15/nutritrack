@@ -55,6 +55,8 @@ const FOOD_DB = [
   // ---- Latticini ----
   { name: "Yogurt greco 0%",           kcal: 57,  p: 10.0, c: 3.9,  f: 0.2,  portion: 170, alias: ["yogurt greco"], cat: "latticini", meals: ["colazione", "spuntino"] },
   { name: "Yogurt greco 2%",           kcal: 73,  p: 9.5,  c: 4.0,  f: 2.0,  portion: 170, cat: "latticini", meals: ["colazione", "spuntino"] },
+  { name: "Yogurt greco 5% (intero)",  kcal: 97,  p: 9.0,  c: 3.8,  f: 5.0,  portion: 170, alias: ["yogurt greco intero"], cat: "latticini", meals: ["colazione", "spuntino"] },
+  { name: "Yogurt magro",              kcal: 36,  p: 4.0,  c: 5.0,  f: 0.1,  portion: 125, unit: 125, cat: "latticini", meals: ["colazione", "spuntino"] },
   { name: "Yogurt bianco intero",      kcal: 66,  p: 3.8,  c: 4.3,  f: 3.9,  portion: 125, unit: 125, alias: ["yogurt"], cat: "latticini", meals: ["colazione", "spuntino"] },
   { name: "Yogurt alla frutta",        kcal: 88,  p: 3.0,  c: 14.0, f: 2.0,  portion: 125, unit: 125, cat: "latticini", meals: ["colazione", "spuntino"] },
   { name: "Skyr",                      kcal: 63,  p: 11.0, c: 4.0,  f: 0.2,  portion: 150, cat: "latticini", meals: ["colazione", "spuntino"] },
@@ -62,11 +64,15 @@ const FOOD_DB = [
   { name: "Fiocchi di latte",          kcal: 98,  p: 11.0, c: 3.4,  f: 4.3,  portion: 150, cat: "latticini", meals: ["pranzo", "cena", "spuntino"] },
   { name: "Ricotta vaccina",           kcal: 146, p: 11.0, c: 3.5,  f: 10.0, portion: 100, alias: ["ricotta"], cat: "latticini", meals: ["colazione", "pranzo", "cena"] },
   { name: "Mozzarella",                kcal: 253, p: 18.7, c: 0.7,  f: 19.5, portion: 100, unit: 125, cat: "latticini", meals: ["pranzo", "cena"] },
+  { name: "Mozzarella light",          kcal: 163, p: 20.0, c: 1.0,  f: 9.0,  portion: 100, unit: 125, cat: "latticini", meals: ["pranzo", "cena"] },
+  { name: "Mozzarella di bufala",      kcal: 288, p: 16.5, c: 0.8,  f: 24.0, portion: 100, unit: 125, alias: ["bufala"], cat: "latticini", meals: ["pranzo", "cena"] },
   { name: "Burrata",                   kcal: 300, p: 13.0, c: 2.0,  f: 27.0, portion: 100, unit: 125, cat: "latticini", meals: ["pranzo", "cena"] },
   { name: "Stracchino",                kcal: 300, p: 18.0, c: 1.0,  f: 25.0, portion: 50,  cat: "latticini", meals: ["pranzo", "cena"] },
   { name: "Scamorza",                  kcal: 334, p: 25.0, c: 1.0,  f: 25.6, portion: 70,  cat: "latticini", meals: ["pranzo", "cena"] },
   { name: "Feta",                      kcal: 264, p: 14.0, c: 4.0,  f: 21.0, portion: 50,  cat: "latticini", meals: ["pranzo", "cena"] },
   { name: "Formaggio spalmabile",      kcal: 253, p: 6.0,  c: 4.0,  f: 24.0, portion: 30,  alias: ["philadelphia"], cat: "latticini", meals: ["colazione", "spuntino"] },
+  { name: "Formaggio spalmabile light", kcal: 156, p: 7.5, c: 5.0,  f: 11.5, portion: 30,  alias: ["philadelphia light"], cat: "latticini", meals: ["colazione", "spuntino"] },
+  { name: "Ricotta light",             kcal: 110, p: 10.5, c: 3.5,  f: 6.0,  portion: 100, cat: "latticini", meals: ["colazione", "pranzo", "cena"] },
   { name: "Parmigiano Reggiano",       kcal: 392, p: 33.0, c: 0.0,  f: 28.0, portion: 20,  alias: ["parmigiano"], cat: "latticini", meals: ["pranzo", "cena", "spuntino"] },
   { name: "Grana Padano",              kcal: 398, p: 33.0, c: 0.0,  f: 29.0, portion: 20,  alias: ["grana"], cat: "latticini", meals: ["pranzo", "cena", "spuntino"] },
   { name: "Pecorino",                  kcal: 387, p: 28.0, c: 0.0,  f: 30.0, portion: 20,  cat: "latticini", meals: ["pranzo", "cena"] },
@@ -74,8 +80,10 @@ const FOOD_DB = [
   { name: "Latte parzialmente scremato", kcal: 46, p: 3.3, c: 5.0,  f: 1.5,  portion: 200, alias: ["latte"], cat: "latticini", meals: ["colazione"] },
   { name: "Latte intero",              kcal: 64,  p: 3.3,  c: 4.9,  f: 3.6,  portion: 200, cat: "latticini", meals: ["colazione"] },
   { name: "Latte scremato",            kcal: 36,  p: 3.6,  c: 5.0,  f: 0.2,  portion: 200, cat: "latticini", meals: ["colazione"] },
+  { name: "Latte senza lattosio",      kcal: 46,  p: 3.3,  c: 5.0,  f: 1.5,  portion: 200, cat: "latticini", meals: ["colazione"] },
   { name: "Latte di soia",             kcal: 32,  p: 3.0,  c: 1.5,  f: 1.8,  portion: 200, cat: "latticini", meals: ["colazione"] },
   { name: "Latte di mandorla",         kcal: 24,  p: 0.5,  c: 3.0,  f: 1.1,  portion: 200, cat: "latticini", meals: ["colazione"] },
+  { name: "Latte d'avena",             kcal: 47,  p: 0.8,  c: 7.0,  f: 1.5,  portion: 200, alias: ["latte avena"], cat: "latticini", meals: ["colazione"] },
 
   // ---- Legumi ----
   { name: "Ceci cotti",                kcal: 120, p: 7.0,  c: 18.0, f: 2.4,  portion: 150, alias: ["ceci"], cat: "legumi", meals: ["pranzo", "cena"] },
@@ -164,6 +172,10 @@ const FOOD_DB = [
 
   // ---- Grassi buoni ----
   { name: "Olio extravergine d'oliva", kcal: 884, p: 0.0,  c: 0.0,  f: 100.0, portion: 10, alias: ["olio", "olio evo", "olio d'oliva"], cat: "grassi", meals: ["pranzo", "cena"] },
+  { name: "Maionese",                  kcal: 690, p: 1.0,  c: 2.0,  f: 75.0, portion: 15,  cat: "grassi", meals: ["pranzo", "cena"] },
+  { name: "Maionese light",            kcal: 340, p: 1.0,  c: 8.0,  f: 33.0, portion: 15,  cat: "grassi", meals: ["pranzo", "cena"] },
+  { name: "Ketchup",                   kcal: 100, p: 1.2,  c: 24.0, f: 0.1,  portion: 15,  cat: "grassi", meals: ["pranzo", "cena"] },
+  { name: "Pesto",                     kcal: 450, p: 5.0,  c: 6.0,  f: 45.0, portion: 30,  cat: "grassi", meals: ["pranzo", "cena"] },
   { name: "Avocado",                   kcal: 160, p: 2.0,  c: 8.5,  f: 15.0, portion: 100, unit: 200, cat: "grassi", meals: ["colazione", "pranzo", "cena"] },
   { name: "Olive",                     kcal: 145, p: 1.0,  c: 4.0,  f: 15.0, portion: 25,  unit: 4, cat: "grassi", meals: ["pranzo", "cena", "spuntino"] },
   { name: "Mandorle",                  kcal: 603, p: 22.0, c: 4.6,  f: 55.0, portion: 20,  unit: 1.2, cat: "frutta secca", meals: ["colazione", "spuntino"] },
@@ -208,6 +220,7 @@ const FOOD_DB = [
 
   // ---- Dolci e colazione ----
   { name: "Marmellata",                kcal: 240, p: 0.5,  c: 59.0, f: 0.1,  portion: 25,  cat: "dolci", meals: ["colazione"] },
+  { name: "Marmellata senza zuccheri", kcal: 120, p: 0.5,  c: 28.0, f: 0.1,  portion: 25,  cat: "dolci", meals: ["colazione"] },
   { name: "Miele",                     kcal: 304, p: 0.6,  c: 80.0, f: 0.0,  portion: 15,  cat: "dolci", meals: ["colazione"] },
   { name: "Zucchero",                  kcal: 392, p: 0.0,  c: 100.0, f: 0.0, portion: 5,   unit: 5, cat: "dolci", meals: ["colazione"] },
   { name: "Biscotti secchi",           kcal: 416, p: 7.0,  c: 80.0, f: 8.0,  portion: 30,  unit: 8, alias: ["biscotti"], cat: "dolci", meals: ["colazione", "spuntino"] },
@@ -221,16 +234,24 @@ const FOOD_DB = [
   { name: "Crostata",                  kcal: 380, p: 5.5,  c: 60.0, f: 13.0, portion: 80,  cat: "dolci", meals: ["colazione", "spuntino"] },
   { name: "Merendina",                 kcal: 400, p: 5.0,  c: 55.0, f: 18.0, portion: 35,  unit: 35, cat: "dolci", meals: ["colazione", "spuntino"] },
   { name: "Tiramisù",                  kcal: 290, p: 5.5,  c: 33.0, f: 15.0, portion: 120, cat: "dolci", meals: ["spuntino"] },
-  { name: "Gelato alla crema",         kcal: 200, p: 3.8,  c: 24.0, f: 10.0, portion: 100, alias: ["gelato"], cat: "dolci", meals: ["spuntino"] },
-  { name: "Gelato alla frutta",        kcal: 140, p: 2.0,  c: 28.0, f: 2.5,  portion: 100, alias: ["sorbetto"], cat: "dolci", meals: ["spuntino"] },
+  { name: "Gelato alla crema",         kcal: 200, p: 3.8,  c: 24.0, f: 10.0, portion: 100, unit: 60, alias: ["gelato", "gelato artigianale", "pallina"], cat: "dolci", meals: ["spuntino"] },
+  { name: "Gelato alla frutta",        kcal: 140, p: 2.0,  c: 28.0, f: 2.5,  portion: 100, unit: 60, alias: ["sorbetto"], cat: "dolci", meals: ["spuntino"] },
+  { name: "Gelato al pistacchio",      kcal: 240, p: 6.0,  c: 22.0, f: 15.0, portion: 100, unit: 60, cat: "dolci", meals: ["spuntino"] },
+  { name: "Gelato al cioccolato",      kcal: 220, p: 4.5,  c: 26.0, f: 11.0, portion: 100, unit: 60, cat: "dolci", meals: ["spuntino"] },
+  { name: "Gelato alla nocciola",      kcal: 230, p: 5.0,  c: 24.0, f: 14.0, portion: 100, unit: 60, cat: "dolci", meals: ["spuntino"] },
+  { name: "Cono gelato confezionato",  kcal: 330, p: 4.5,  c: 40.0, f: 17.0, portion: 75,  unit: 75, alias: ["cornetto algida", "cono"], cat: "dolci", meals: ["spuntino"] },
+  { name: "Ghiacciolo",                kcal: 80,  p: 0.0,  c: 20.0, f: 0.0,  portion: 70,  unit: 70, cat: "dolci", meals: ["spuntino"] },
 
   // ---- Bevande ----
   { name: "Caffè espresso",            kcal: 2,   p: 0.1,  c: 0.3,  f: 0.0,  portion: 30,  unit: 30, alias: ["caffe", "espresso"], cat: "bevande", meals: ["colazione", "spuntino"] },
   { name: "Cappuccino",                kcal: 45,  p: 2.5,  c: 4.5,  f: 1.7,  portion: 150, unit: 150, cat: "bevande", meals: ["colazione"] },
   { name: "Succo d'arancia",           kcal: 45,  p: 0.7,  c: 10.0, f: 0.2,  portion: 200, alias: ["succo di frutta", "spremuta"], cat: "bevande", meals: ["colazione", "spuntino"] },
   { name: "Coca cola",                 kcal: 42,  p: 0.0,  c: 10.6, f: 0.0,  portion: 330, unit: 330, alias: ["cola"], cat: "bevande", meals: ["pranzo", "cena"] },
+  { name: "Bibita zero",               kcal: 0,   p: 0.0,  c: 0.0,  f: 0.0,  portion: 330, unit: 330, alias: ["coca zero", "cola zero", "coca light"], cat: "bevande", meals: ["pranzo", "cena"] },
+  { name: "Tè freddo",                 kcal: 28,  p: 0.0,  c: 7.0,  f: 0.0,  portion: 330, unit: 330, alias: ["the freddo", "estathe"], cat: "bevande", meals: ["pranzo", "spuntino"] },
   { name: "Birra",                     kcal: 43,  p: 0.5,  c: 3.5,  f: 0.0,  portion: 330, unit: 330, cat: "bevande", meals: ["pranzo", "cena"] },
   { name: "Vino rosso",                kcal: 85,  p: 0.1,  c: 2.5,  f: 0.0,  portion: 125, unit: 125, alias: ["vino"], cat: "bevande", meals: ["pranzo", "cena"] },
+  { name: "Spritz",                    kcal: 90,  p: 0.0,  c: 8.0,  f: 0.0,  portion: 200, unit: 200, alias: ["aperol"], cat: "bevande", meals: ["cena"] },
 ];
 
 const CAT_EMOJI = {

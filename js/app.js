@@ -1169,7 +1169,7 @@ async function aiComplete({ system, schema, blocks, maxTokens, effort }) {
         // Solo per la famiglia 2.5: i modelli più nuovi dietro gli alias
         // potrebbero non accettare questo parametro.
         ...(model.startsWith("gemini-2.5")
-          ? { thinkingConfig: { thinkingBudget: effort === "low" ? 0 : 8192 } }
+          ? { thinkingConfig: { thinkingBudget: effort === "low" ? 0 : 16384 } }
           : {}),
       },
     });
@@ -1284,13 +1284,45 @@ bevande in lattina/bottiglia, salumi confezionati, formaggini…), metti "confez
 in "marca" il nome della marca. Usa la marca che dice l'utente; se cita un prodotto che di
 fatto È una marca ("nutella", "philadelphia", "gocciole", "pan di stelle", "fonzies") deduci
 la marca più probabile (Nutella→Ferrero, Philadelphia→Kraft, Gocciole/Pan di stelle→Mulino
-Bianco o Pavesi, ecc.) e metti in "nome" il prodotto ("Nutella", "Gocciole"). Per alimenti
+Bianco o Pavesi, ecc.) e metti in "nome" il prodotto ("Nutella", "Gocciole"). Includi SEMPRE
+la variante nel nome del prodotto di marca ("Philadelphia Light", "Coca-Cola Zero", "Yogurt
+greco Fage 0%"): serve a trovare la referenza esatta online. Per alimenti
 freschi o sfusi (mela, petto di pollo, pane del fornaio) e per gli ingredienti dei piatti di
 ristorante lascia "marca" vuota e "confezionato" a false. Anche quando marchi un prodotto,
 compila comunque i valori stimati per 100 g: sono la riserva se la marca non si trova online.
 
+VARIANTI — mai un nome generico quando esistono varianti con macro molto diversi. Esempi:
+latte (intero 3,6% / parzialmente scremato 1,5% / scremato / senza lattosio / soia / avena /
+mandorla), formaggi spalmabili (classico / light / extra light), yogurt (bianco intero /
+magro / greco 0% / 2% / 5% / alla frutta / skyr / kefir), mozzarella (vaccina / light /
+bufala), ricotta (normale / light), tonno (al naturale / sott'olio), affettati (crudo /
+cotto / sgrassato / bresaola / fesa), pane (bianco / integrale / segale), pasta e riso
+(semola / integrale / basmati / venere), bibite (normale / zero), birra (normale / doppio
+malto / analcolica), marmellata (classica / senza zuccheri), maionese e salse (classica /
+light), cioccolato (fondente 70-85% / al latte / bianco), carne macinata (magra 5% / 15-20%),
+uova (intere / solo albumi), cereali (avena / muesli / cornflakes), burro (normale / light).
+Se la persona specifica la variante, usala. Se NON la specifica, scegli la variante più
+venduta/comune in Italia (latte → parzialmente scremato, yogurt greco → 0%, tonno in
+scatola → sott'olio, pane → bianco…) e SCRIVILA per esteso in "nome" ("Latte parzialmente
+scremato"), così può correggerla se intendeva altro.
+
+GELATO E DOLCI DA BANCO: il gelato artigianale va stimato per gusto: gusti crema (pistacchio,
+nocciola, cioccolato, crema) ≈ 200-240 kcal/100 g; gusti frutta/sorbetto ≈ 120-150. Porzioni
+da gelateria: 1 pallina ≈ 60 g, coppetta piccola ≈ 100 g, media ≈ 150 g, grande ≈ 200-250 g,
+cono ≈ +10 g di cialda (≈ 40 kcal). Pasticceria: pasta/brioche da bar ≈ 50-70 g, pasticcino
+mignon ≈ 25 g, fetta di torta ≈ 80-120 g, cannolo ≈ 120 g, maritozzo ≈ 130 g.
+
+MISURE CASALINGHE (se non ci sono grammi espliciti): bicchiere ≈ 200 ml, tazza latte ≈ 250,
+tazzina caffè ≈ 30, cucchiaio ≈ 10-15 g (olio 10, marmellata 20, formaggio spalmabile 15,
+zucchero 10), cucchiaino ≈ 5, fetta di pane ≈ 40 g, fetta in cassetta ≈ 25, fetta biscottata
+≈ 8, fetta di prosciutto ≈ 15-20, sottiletta ≈ 20, uovo intero ≈ 60 (albume 33, tuorlo 17),
+frutto medio (mela 180, banana sbucciata 120, arancia 150, kiwi 80, pesca 150), quadretto di
+cioccolato ≈ 6, bustina di zucchero ≈ 5, lattina ≈ 330 ml, bottiglietta ≈ 500 ml, calice di
+vino ≈ 125 ml, birra media ≈ 400 ml, shot ≈ 40 ml, panino ≈ 80-100 g di pane, piadina ≈ 120,
+tramezzino ≈ 90, pacchetto di cracker ≈ 25, porzione di patatine in busta ≈ 30.
+
 VALORI: per ogni voce stima kcal, proteine, carboidrati e grassi medi per 100 g da fonti
-standard (CREA/USDA), riferiti all'ingrediente così com'è nel piatto.
+standard (CREA/USDA), riferiti all'ingrediente/variante così com'è nel piatto.
 
 PASTO: usa i riferimenti nel testo ("stasera" → cena, "stamattina" → colazione, "a pranzo" →
 pranzo); senza riferimenti, deducilo dall'ora attuale indicata; tutte le voci dello stesso
