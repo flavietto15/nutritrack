@@ -40,6 +40,7 @@ function loadState() {
   if (!s.trainingGoals) s.trainingGoals = null;
   if (!s.trainingDays) s.trainingDays = {};
   if (!s.workouts) s.workouts = {};
+  if (!s.weights) s.weights = {};
   return s;
 }
 
@@ -65,6 +66,8 @@ function backupPayload() {
       trainingGoals: state.trainingGoals,
       days: state.days || {},
       trainingDays: state.trainingDays || {},
+      workouts: state.workouts || {},
+      weights: state.weights || {},
     },
   };
 }
@@ -125,9 +128,18 @@ function importData(file) {
     };
     if (!state.days) state.days = {};
     if (!state.trainingDays) state.trainingDays = {};
+    if (!state.workouts) state.workouts = {};
+    if (!state.weights) state.weights = {};
     const before = countEntries(state.days);
     mergeDays(state.days, d.days);
-    mergeDays(state.trainingDays, d.trainingDays);
+    mergeDays(state.workouts, d.workouts);
+    // valori per-data non-array (flag allenamento, peso): riempi solo i buchi
+    for (const [date, v] of Object.entries(d.trainingDays || {})) {
+      if (!(date in state.trainingDays)) state.trainingDays[date] = v;
+    }
+    for (const [date, v] of Object.entries(d.weights || {})) {
+      if (!(date in state.weights) && typeof v === "number") state.weights[date] = v;
+    }
     if (!state.goals && d.goals) state.goals = d.goals;
     if (!state.profile && d.profile) state.profile = d.profile;
     if (!state.trainingGoals && d.trainingGoals) state.trainingGoals = d.trainingGoals;
@@ -386,6 +398,7 @@ function render() {
   renderMeters(totals);
   renderSuggestions();
   renderTraining();
+  renderWeight();
   renderMeals();
 
   if (staggerNextRender) {
@@ -447,7 +460,10 @@ function renderMeals() {
               <span class="entry-kcal">${r0(n.kcal)} kcal</span>
             </div>`;
         }).join("")
-      : `<div class="empty-meal">Nessun alimento — tocca <strong>+</strong> qui sopra, oppure 🎤 Detta o 📷 Scan in basso.</div>`;
+      : `<div class="empty-meal">Nessun alimento — tocca <strong>+</strong> qui sopra, oppure 🎤 Detta o 📷 Scan in basso.</div>` +
+        (lastMealDay(meal.id)
+          ? `<button class="ghost-btn meal-repeat" data-repeat="${meal.id}">↩︎ Ripeti ${meal.label.toLowerCase()} di ${fmtDate(lastMealDay(meal.id)).toLowerCase()}</button>`
+          : "");
     return `
       <div class="card meal-card">
         <div class="meal-head">
@@ -466,6 +482,27 @@ function renderMeals() {
   $$(".entry").forEach((row) =>
     row.addEventListener("click", () => openEditEntry(row.dataset.entry))
   );
+  $$(".meal-repeat").forEach((btn) =>
+    btn.addEventListener("click", () => repeatMeal(btn.dataset.repeat))
+  );
+}
+
+/** Ultimo giorno (entro 14) con voci per quel pasto, prima del giorno visualizzato */
+function lastMealDay(mealId) {
+  for (let i = 1; i <= 14; i++) {
+    const [y, m, d] = viewDate.split("-").map(Number);
+    const key = dateToKey(new Date(y, m - 1, d - i));
+    if ((state.days[key] || []).some((e) => e.meal === mealId)) return key;
+  }
+  return null;
+}
+
+function repeatMeal(mealId) {
+  const key = lastMealDay(mealId);
+  if (!key) return;
+  const copies = state.days[key].filter((e) => e.meal === mealId);
+  for (const e of copies) addEntry({ meal: mealId, name: e.name, grams: e.grams, per100: e.per100 });
+  toast(`${copies.length} ${copies.length === 1 ? "voce copiata" : "voci copiate"} da ${fmtDate(key).toLowerCase()} ↩︎`);
 }
 
 /* ---------- Motore suggerimenti ---------- */
@@ -595,6 +632,11 @@ function suggestFoods(rem, slot) {
 
 function buildTip(rem, slotLabel) {
   const g = activeGoals();
+  // Allenamento di oggi → carboidrati prioritari nel pasto successivo
+  const burn = dayWorkouts(todayKey()).reduce((s, w) => s + workoutKcal(w), 0);
+  const trainLine = burn >= 200
+    ? `🏋️ Oggi hai bruciato ~${burn} kcal in allenamento: nel prossimo pasto dai priorità ai carboidrati per il recupero. `
+    : "";
   // Macro con il gap relativo maggiore rispetto all'obiettivo
   const gaps = MACROS.map((m) => ({
     m, gap: g[m.id] > 0 ? Math.max(0, rem[m.id]) / g[m.id] : 0,
@@ -602,7 +644,7 @@ function buildTip(rem, slotLabel) {
   const top = gaps[0];
 
   if (top.gap < 0.08) {
-    return `Sei in linea con tutti i macro: per ${slotLabel} scegli quello che preferisci, hai ${r0(rem.kcal)} kcal a disposizione.`;
+    return trainLine + `Sei in linea con tutti i macro: per ${slotLabel} scegli quello che preferisci, hai ${r0(rem.kcal)} kcal a disposizione.`;
   }
   const gLeft = r0(rem[top.m.id]);
   const advice = {
@@ -610,7 +652,7 @@ function buildTip(rem, slotLabel) {
     c: "via libera a cereali, pane integrale, frutta o patate",
     f: "aggiungi grassi buoni (olio EVO, avocado, frutta secca)",
   }[top.m.id];
-  return `Ti mancano ancora ~${gLeft} g di ${top.m.label.toLowerCase()}: per ${slotLabel} ${advice}. Budget: ${r0(rem.kcal)} kcal.`;
+  return trainLine + `Ti mancano ancora ~${gLeft} g di ${top.m.label.toLowerCase()}: per ${slotLabel} ${advice}. Budget: ${r0(rem.kcal)} kcal.`;
 }
 
 /* ---------- Diario: aggiunta / modifica ---------- */
@@ -2354,6 +2396,11 @@ function coachPromptText(input) {
   if (adh.days >= 3) {
     lines.push(`Dal diario (ultimi 7 giorni, ${adh.days} registrati): media ${Math.round(adh.kcal)} kcal e ${Math.round(adh.p)} g di proteine al giorno`);
   }
+  const wDates = Object.keys(state.weights || {}).sort().slice(-10);
+  if (wDates.length >= 2) {
+    const first = wDates[0], lastW = wDates[wDates.length - 1];
+    lines.push(`Peso registrato nell'app: da ${state.weights[first]} kg (${first}) a ${state.weights[lastW]} kg (${lastW}) — usa questo trend REALE per giudicare se le calorie attuali funzionano davvero`);
+  }
   return lines.join("\n");
 }
 
@@ -2874,6 +2921,71 @@ function workoutMuscleText(w) {
   return [(w.exercises || []).map((e) => e.name).join(" "), w.note || ""].join(" ");
 }
 
+/* ---------- Peso corporeo ---------- */
+
+/** Sparkline SVG degli ultimi valori: linea + area + punto finale (hue di sistema) */
+function sparklineSvg(values, w = 120, h = 36) {
+  if (values.length < 2) return "";
+  const pad = 4;
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min || 1;
+  const x = (i) => pad + (i * (w - 2 * pad)) / (values.length - 1);
+  const y = (v) => h - pad - ((v - min) * (h - 2 * pad)) / span;
+  const pts = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+  const last = values.length - 1;
+  return `
+    <path class="spark-area" d="M${pts.join(" L")} L${x(last).toFixed(1)},${h - pad} L${x(0).toFixed(1)},${h - pad} Z"/>
+    <polyline class="spark-line" points="${pts.join(" ")}"/>
+    <circle class="spark-dot" cx="${x(last).toFixed(1)}" cy="${y(values[last]).toFixed(1)}" r="3"/>`;
+}
+
+function fmtKg(v) { return String(Math.round(v * 10) / 10).replace(".", ","); }
+
+function renderWeight() {
+  const dates = Object.keys(state.weights).sort();
+  if (!dates.length) {
+    $("#weightValue").textContent = "–";
+    $("#weightTrend").textContent = "";
+    $("#weightSpark").innerHTML = "";
+    $("#weightHint").textContent = "Pesati al mattino a digiuno: il trend settimanale conta più del singolo giorno.";
+    return;
+  }
+  const lastDate = dates[dates.length - 1];
+  const last = state.weights[lastDate];
+  $("#weightValue").textContent = fmtKg(last);
+  $("#weightSpark").innerHTML = sparklineSvg(dates.slice(-30).map((d) => state.weights[d]));
+
+  // Trend: confronto col valore registrato più vicino a 7 giorni prima
+  const dayMs = 86400000;
+  const target = new Date(lastDate).getTime() - 7 * dayMs;
+  let ref = null;
+  for (const d of dates.slice(0, -1)) {
+    if (!ref || Math.abs(new Date(d) - target) < Math.abs(new Date(ref) - target)) ref = d;
+  }
+  if (ref) {
+    const delta = last - state.weights[ref];
+    const days = Math.round((new Date(lastDate) - new Date(ref)) / dayMs);
+    $("#weightTrend").textContent =
+      `${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${fmtKg(Math.abs(delta))} kg in ${days} g${days === 1 ? "iorno" : "iorni"}`;
+  } else {
+    $("#weightTrend").textContent = "";
+  }
+  $("#weightHint").textContent =
+    viewDate === todayKey() && !state.weights[viewDate] ? "Non hai ancora registrato il peso di oggi." : "";
+}
+
+function saveWeight() {
+  const v = parseFloat($("#weightInput").value.replace(",", "."));
+  if (!(v >= 30 && v <= 250)) { toast("Inserisci un peso tra 30 e 250 kg"); return; }
+  state.weights[viewDate] = Math.round(v * 10) / 10;
+  // il peso aggiorna anche il profilo usato da coach e stima kcal allenamento
+  if (state.profile) state.profile.weight = state.weights[viewDate];
+  saveState();
+  $("#weightInput").value = "";
+  render();
+  toast("Peso registrato ⚖️");
+}
+
 function renderTraining() {
   const list = dayWorkouts();
   const rows = list.length
@@ -3090,6 +3202,10 @@ function init() {
     if (e.target.files[0]) importData(e.target.files[0]);
     e.target.value = ""; // permette di reimportare lo stesso file
   });
+
+  // Peso
+  $("#weightSave").addEventListener("click", saveWeight);
+  $("#weightInput").addEventListener("keydown", (e) => { if (e.key === "Enter") saveWeight(); });
 
   // Allenamento
   $("#openWorkout").addEventListener("click", () => openWorkoutModal());

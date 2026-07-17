@@ -401,6 +401,17 @@ body {
   margin: 8px 0;
 }
 
+/* ===== Peso corporeo ===== */
+.weight-trend { font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.weight-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.weight-now { display: flex; align-items: baseline; gap: 4px; }
+.weight-value { font-family: var(--font-display); font-size: 28px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.weight-unit { font-size: 12px; color: var(--muted); }
+.spark-line { fill: none; stroke: var(--kcal); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.spark-area { fill: var(--kcal); opacity: 0.12; }
+.spark-dot { fill: var(--kcal); }
+.meal-repeat { padding: 6px 0 0; font-size: 12.5px; }
+
 /* ===== Zona allenamento ===== */
 .wk-row {
   border: 1px solid var(--line);
