@@ -412,6 +412,38 @@ body {
 .spark-dot { fill: var(--kcal); }
 .meal-repeat { padding: 6px 0 0; font-size: 12.5px; }
 
+/* ===== Storico settimanale ===== */
+.week-bars {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  height: 84px;
+  margin-bottom: 8px;
+}
+.wb { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.wb-track {
+  flex: 1;
+  width: 100%;
+  max-width: 26px;
+  background: var(--line);
+  border-radius: 5px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+.wb-fill { width: 100%; background: var(--kcal); border-radius: 5px 5px 0 0; }
+.wb-fill.over { background: var(--danger); }
+.wb-day { font-size: 10px; font-weight: 700; color: var(--muted); }
+.wb-goal {
+  position: absolute;
+  left: 0; right: 0;
+  top: 13px;                     /* barre 66px con tetto 125% → il 100% sta a 13px dall'alto */
+  height: 0;
+  border-top: 1.5px dashed var(--muted);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 /* ===== Zona allenamento ===== */
 .wk-row {
   border: 1px solid var(--line);

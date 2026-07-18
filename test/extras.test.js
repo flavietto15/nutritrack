@@ -52,6 +52,24 @@ module.exports = async function ({ browser, baseURL }) {
     const html = await page.content();
     assert(html.includes("manifest.webmanifest") && html.includes("apple-touch-icon"), "index collega manifest e icona iOS");
 
+    // --- Settimana: barre, conteggio in linea, media ---
+    await page.evaluate(() => {
+      for (let i = 2; i <= 4; i++) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        state.days[dateToKey(d)] = [{ id: "s" + i, meal: "pranzo", name: "Pasto", grams: 100,
+          per100: { kcal: activeGoals().kcal, p: 0, c: 0, f: 0 } }]; // esattamente a obiettivo
+      }
+      saveState(); render();
+    });
+    const score = await page.textContent("#weekScore");
+    assert(/[3-9]\/\d/.test(score), "conteggio giorni in linea presente: " + score);
+    assert((await page.$$eval("#weekBars .wb", (n) => n.length)) === 7, "7 barre nella settimana");
+    assert((await page.textContent("#weekHint")).includes("Media"), "media settimanale mostrata");
+
+    // --- Proiezione peso: ritmo −1 kg/7g → stima a un mese ---
+    const proj = await page.textContent("#weightHint");
+    assert(proj.includes("A questo ritmo"), "proiezione peso mostrata: " + proj);
+
     // --- Il backup ora include peso e allenamenti ---
     const payload = await page.evaluate(() => backupPayload().data);
     assert(payload.weights && payload.workouts, "backup con weights e workouts");

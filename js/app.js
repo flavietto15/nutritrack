@@ -399,6 +399,7 @@ function render() {
   renderSuggestions();
   renderTraining();
   renderWeight();
+  renderWeek();
   renderMeals();
 
   if (staggerNextRender) {
@@ -2921,6 +2922,37 @@ function workoutMuscleText(w) {
   return [(w.exercises || []).map((e) => e.name).join(" "), w.note || ""].join(" ");
 }
 
+/* ---------- Storico settimanale ---------- */
+
+/** Ultimi 7 giorni: barre kcal/obiettivo (100% = obiettivo del giorno, tetto 125%) */
+function renderWeek() {
+  const CAP = 1.25;
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push(todayKey(-i));
+  let logged = 0, inLine = 0, kcalSum = 0;
+  const bars = days.map((key) => {
+    const kcal = dayTotals(key).kcal;
+    const goal = activeGoals(key).kcal;
+    const letter = ["D", "L", "M", "M", "G", "V", "S"][new Date(key).getDay()];
+    if (!kcal) return `<div class="wb"><div class="wb-track"></div><span class="wb-day">${letter}</span></div>`;
+    logged++;
+    kcalSum += kcal;
+    const ratio = kcal / goal;
+    if (ratio >= 0.9 && ratio <= 1.1) inLine++;
+    const h = Math.round(Math.min(ratio, CAP) / CAP * 100);
+    return `
+      <div class="wb" title="${key}: ${r0(kcal)} / ${r0(goal)} kcal">
+        <div class="wb-track"><div class="wb-fill${ratio > 1.1 ? " over" : ""}" style="height:${h}%"></div></div>
+        <span class="wb-day">${letter}</span>
+      </div>`;
+  }).join("");
+  $("#weekBars").innerHTML = `<div class="wb-goal"></div>` + bars;
+  $("#weekScore").textContent = logged ? `${inLine}/${logged} giorni in linea` : "";
+  $("#weekHint").textContent = logged
+    ? `Media ${r0(kcalSum / logged)} kcal nei ${logged} giorni registrati · obiettivo ${r0(activeGoals(todayKey()).kcal)} · in linea = ±10%. La riga tratteggiata è l'obiettivo.`
+    : "Registra i pasti e qui vedrai l'andamento della settimana.";
+}
+
 /* ---------- Peso corporeo ---------- */
 
 /** Sparkline SVG degli ultimi valori: linea + area + punto finale (hue di sistema) */
@@ -2962,16 +2994,26 @@ function renderWeight() {
   for (const d of dates.slice(0, -1)) {
     if (!ref || Math.abs(new Date(d) - target) < Math.abs(new Date(ref) - target)) ref = d;
   }
+  let projection = "";
   if (ref) {
     const delta = last - state.weights[ref];
     const days = Math.round((new Date(lastDate) - new Date(ref)) / dayMs);
     $("#weightTrend").textContent =
       `${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${fmtKg(Math.abs(delta))} kg in ${days} g${days === 1 ? "iorno" : "iorni"}`;
+    // Proiezione sul ritmo attuale (solo con un trend vero: ≥5 giorni e ≥0,3 kg)
+    if (days >= 5 && Math.abs(delta) >= 0.3) {
+      const rate = delta / days;
+      const target = state.coach && state.coach.targetW;
+      const eta = target ? Math.round((target - last) / rate) : -1;
+      projection = target && eta > 0 && eta <= 365
+        ? `🎯 A questo ritmo arrivi a ${fmtKg(target)} kg ${new Date(Date.now() + eta * dayMs).toLocaleDateString("it-IT", { day: "numeric", month: "long" })}.`
+        : `A questo ritmo tra un mese: ~${fmtKg(last + rate * 30)} kg.`;
+    }
   } else {
     $("#weightTrend").textContent = "";
   }
-  $("#weightHint").textContent =
-    viewDate === todayKey() && !state.weights[viewDate] ? "Non hai ancora registrato il peso di oggi." : "";
+  $("#weightHint").textContent = projection ||
+    (viewDate === todayKey() && !state.weights[viewDate] ? "Non hai ancora registrato il peso di oggi." : "");
 }
 
 function saveWeight() {
