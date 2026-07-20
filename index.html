@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
   <title>NutriTrack — Diario calorie e macro</title>
-  <link rel="stylesheet" href="css/style.css?v=18">
+  <link rel="stylesheet" href="css/style.css?v=19">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -76,6 +76,7 @@
     <section class="card" aria-label="Macronutrienti">
       <h2 class="card-title">Macro di oggi</h2>
       <div id="macroMeters"></div>
+      <p class="hint" id="microLine"></p>
     </section>
 
     <!-- Suggerimenti -->
@@ -127,6 +128,19 @@
       <p class="hint tdee-line" id="tdeeLine"></p>
     </section>
 
+    <!-- Integratori -->
+    <section class="card" aria-label="Integratori">
+      <div class="card-head">
+        <h2 class="card-title">💊 Integratori</h2>
+        <button class="ghost-btn" id="suppEdit">Modifica</button>
+      </div>
+      <div class="supp-chips" id="suppChips"></div>
+      <div class="row hidden" id="suppAddRow">
+        <input type="text" id="suppInput" class="input" placeholder="Es. Creatina 5 g">
+        <button class="btn" id="suppAdd">＋</button>
+      </div>
+    </section>
+
     <!-- Storico settimanale -->
     <section class="card" aria-label="Ultimi 7 giorni">
       <div class="card-head">
@@ -134,7 +148,9 @@
         <span class="weight-trend" id="weekScore"></span>
       </div>
       <div class="week-bars" id="weekBars"></div>
+      <p class="hint" id="weekBank"></p>
       <p class="hint" id="weekHint"></p>
+      <div class="row mood-row" id="moodRow"></div>
     </section>
 
     <!-- Pasti -->
@@ -160,8 +176,10 @@
         le porzioni medie servite dai ristoranti.</p>
       <div class="row">
         <button class="btn" id="micBtn">🎤 Parla</button>
+        <button class="btn" id="menuBtn" title="Fotografa il menu del ristorante">🍴 Menu</button>
         <span class="hint" id="voiceStatus"></span>
       </div>
+      <input type="file" id="menuFile" accept="image/*" capture="environment" class="hidden">
       <textarea id="voiceText" class="input voice-text" rows="3" placeholder="…oppure scrivi qui la lista"></textarea>
       <button class="btn primary full" id="voiceParse">Analizza</button>
       <div id="voiceParsed"></div>
@@ -272,6 +290,12 @@
       <div class="modal-head">
         <h3 id="goalsTitle">I tuoi obiettivi</h3>
         <button class="icon-btn hidden" id="goalsClose" data-close="goalsModal">✕</button>
+      </div>
+
+      <div class="row profile-row">
+        <span class="gsection">👥 Profilo</span>
+        <select id="profileSel" class="input"></select>
+        <button class="btn" id="profileAdd" title="Nuovo profilo">＋</button>
       </div>
 
       <div class="tabs" role="tablist">
@@ -520,12 +544,12 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/vendor/motion.js?v=18"></script>
-  <script src="js/foods.js?v=18"></script>
-  <script src="js/app.js?v=18"></script>
+  <script src="js/vendor/motion.js?v=19"></script>
+  <script src="js/foods.js?v=19"></script>
+  <script src="js/app.js?v=19"></script>
   <script>
     // App installabile + offline; la ?v= tiene il service worker in passo con gli asset
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=18");
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=19");
   </script>
 </body>
 </html>

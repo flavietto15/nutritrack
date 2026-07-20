@@ -3,6 +3,33 @@
    ============================================================ */
 
 const STORAGE_KEY = "nutritrack:v1";
+const PROFILES_KEY = "nutritrack:profiles";
+
+/* Più persone (o fasi) sullo stesso dispositivo: ogni profilo ha il suo stato */
+function profilesInfo() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROFILES_KEY));
+    if (p && Array.isArray(p.list) && p.list.length) return p;
+  } catch (_) {}
+  return { list: ["Principale"], active: "Principale" };
+}
+
+function storageKey() {
+  const p = profilesInfo();
+  return p.active === "Principale" ? STORAGE_KEY : STORAGE_KEY + ":" + p.active;
+}
+
+function switchProfile(name) {
+  const p = profilesInfo();
+  if (!p.list.includes(name)) p.list.push(name);
+  p.active = name;
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(p));
+  state = loadState();
+  viewDate = todayKey();
+  render();
+  toast(`Profilo: ${name} 👥`);
+  if (!state.goals) openGoalsModal();
+}
 
 const MEALS = [
   { id: "colazione", label: "Colazione", emoji: "☀️" },
@@ -33,7 +60,7 @@ let searchTimer = null;
 function loadState() {
   let s = null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (raw) s = JSON.parse(raw);
   } catch (_) { /* storage corrotto: riparti pulito */ }
   if (!s) s = { goals: null, profile: null, days: {} };
@@ -41,12 +68,15 @@ function loadState() {
   if (!s.trainingDays) s.trainingDays = {};
   if (!s.workouts) s.workouts = {};
   if (!s.weights) s.weights = {};
+  if (!s.supps) s.supps = { list: [], taken: {} };
+  if (!s.mood) s.mood = {};
+  if (!s.bcCache) s.bcCache = {};
   return s;
 }
 
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(storageKey(), JSON.stringify(state));
   } catch (_) { /* storage pieno o bloccato: l'app continua in memoria */ }
 }
 
@@ -68,6 +98,8 @@ function backupPayload() {
       trainingDays: state.trainingDays || {},
       workouts: state.workouts || {},
       weights: state.weights || {},
+      supps: state.supps || { list: [], taken: {} },
+      mood: state.mood || {},
     },
   };
 }
@@ -139,6 +171,13 @@ function importData(file) {
     }
     for (const [date, v] of Object.entries(d.weights || {})) {
       if (!(date in state.weights) && typeof v === "number") state.weights[date] = v;
+    }
+    if (d.supps && d.supps.list) {
+      for (const name of d.supps.list) if (!state.supps.list.includes(name)) state.supps.list.push(name);
+      for (const [date, m] of Object.entries(d.supps.taken || {})) state.supps.taken[date] = { ...m, ...state.supps.taken[date] };
+    }
+    for (const [date, v] of Object.entries(d.mood || {})) {
+      if (!(date in state.mood)) state.mood[date] = v;
     }
     if (!state.goals && d.goals) state.goals = d.goals;
     if (!state.profile && d.profile) state.profile = d.profile;
@@ -400,6 +439,7 @@ function render() {
   renderTraining();
   renderWeight();
   renderWeek();
+  renderSupps();
   renderMeals();
 
   if (staggerNextRender) {
@@ -442,6 +482,13 @@ function renderMeters(totals) {
     fx.meterFill(fill, prevMeterPct[id] ?? 0, pcts[id]);
     prevMeterPct[id] = pcts[id];
   });
+
+  // Fibre / zuccheri / sale (obiettivi indicativi: ≥25 g, <50 g, <5 g)
+  const mi = dayMicros();
+  $("#microLine").textContent = mi.have
+    ? `${mi.fib >= 25 ? "✓" : "·"} Fibre ${r0(mi.fib)} g · ${mi.sug <= 50 ? "✓" : "⚠️"} Zuccheri ${r0(mi.sug)} g · ${mi.salt <= 5 ? "✓" : "⚠️"} Sale ${(Math.round(mi.salt * 10) / 10).toString().replace(".", ",")} g` +
+      (mi.have < mi.tot ? ` (${mi.have}/${mi.tot} voci col dato)` : "")
+    : "";
 }
 
 function renderMeals() {
@@ -449,6 +496,8 @@ function renderMeals() {
   $("#mealsRoot").innerHTML = MEALS.map((meal) => {
     const list = entries.filter((e) => e.meal === meal.id);
     const kcal = list.reduce((s, e) => s + entryNutrients(e).kcal, 0);
+    const pMeal = list.reduce((s, e) => s + entryNutrients(e).p, 0);
+    const pTarget = activeGoals().p * MEAL_SHARE[meal.id];
     const rows = list.length
       ? list.map((e) => {
           const n = entryNutrients(e);
@@ -470,6 +519,7 @@ function renderMeals() {
         <div class="meal-head">
           <span>${meal.emoji}</span>
           <span class="meal-title">${meal.label}</span>
+          ${list.length ? `<span class="meal-prot${pMeal >= pTarget * 0.8 ? " ok" : ""}" title="Proteine del pasto — obiettivo ~${r0(pTarget)} g">P ${r0(pMeal)}g</span>` : ""}
           <span class="meal-kcal">${r0(kcal)} kcal</span>
           <button class="meal-add" data-meal="${meal.id}" title="Aggiungi a ${meal.label}">+</button>
         </div>
@@ -504,6 +554,21 @@ function repeatMeal(mealId) {
   const copies = state.days[key].filter((e) => e.meal === mealId);
   for (const e of copies) addEntry({ meal: mealId, name: e.name, grams: e.grams, per100: e.per100 });
   toast(`${copies.length} ${copies.length === 1 ? "voce copiata" : "voci copiate"} da ${fmtDate(key).toLowerCase()} ↩︎`);
+}
+
+/** Fibre/zuccheri/sale del giorno: solo dalle voci che hanno il dato */
+function dayMicros(key = viewDate) {
+  let fib = 0, sug = 0, salt = 0, have = 0, tot = 0;
+  for (const e of dayEntries(key)) {
+    tot++;
+    if (e.per100.fib == null && e.per100.sug == null && e.per100.salt == null) continue;
+    have++;
+    const k = e.grams / 100;
+    fib += (e.per100.fib || 0) * k;
+    sug += (e.per100.sug || 0) * k;
+    salt += (e.per100.salt || 0) * k;
+  }
+  return { fib, sug, salt, have, tot };
 }
 
 /* ---------- Motore suggerimenti ---------- */
@@ -777,6 +842,9 @@ function offProductToFood(prod) {
       p: Number(n["proteins_100g"]) || 0,
       c: Number(n["carbohydrates_100g"]) || 0,
       f: Number(n["fat_100g"]) || 0,
+      fib: n["fiber_100g"] != null ? Number(n["fiber_100g"]) || 0 : null,
+      sug: n["sugars_100g"] != null ? Number(n["sugars_100g"]) || 0 : null,
+      salt: n["salt_100g"] != null ? Number(n["salt_100g"]) || 0 : null,
     },
     portion: Number(prod.serving_quantity) || 100,
     source: "OFF",
@@ -984,6 +1052,8 @@ function onBarcodeDetected(code) {
 async function lookupBarcode(code) {
   code = String(code).replace(/\D/g, "");
   if (!code) { setScanStatus("Codice non valido."); return; }
+  // prodotto già scansionato: apri subito, anche offline
+  if (state.bcCache[code]) { openAmountModal(state.bcCache[code]); return; }
   setScanStatus(`Cerco il prodotto ${code}…`);
   try {
     const res = await fetch(
@@ -1000,6 +1070,10 @@ async function lookupBarcode(code) {
       setScanStatus("Prodotto trovato ma senza valori nutrizionali. Usa la scheda Manuale.");
       return;
     }
+    state.bcCache[code] = food;
+    const keys = Object.keys(state.bcCache);
+    if (keys.length > 200) delete state.bcCache[keys[0]];
+    saveState();
     openAmountModal(food);
   } catch (err) {
     setScanStatus("Errore di rete: controlla la connessione e riprova.");
@@ -1365,7 +1439,8 @@ vino ≈ 125 ml, birra media ≈ 400 ml, shot ≈ 40 ml, panino ≈ 80-100 g di 
 tramezzino ≈ 90, pacchetto di cracker ≈ 25, porzione di patatine in busta ≈ 30.
 
 VALORI: per ogni voce stima kcal, proteine, carboidrati e grassi medi per 100 g da fonti
-standard (CREA/USDA), riferiti all'ingrediente/variante così com'è nel piatto.
+standard (CREA/USDA), riferiti all'ingrediente/variante così com'è nel piatto; stima anche
+fibre_100g, zuccheri_100g e sale_100g (sale = sodio × 2,5).
 
 PASTO: usa i riferimenti nel testo ("stasera" → cena, "stamattina" → colazione, "a pranzo" →
 pranzo); senza riferimenti, deducilo dall'ora attuale indicata; tutte le voci dello stesso
@@ -1382,7 +1457,7 @@ const AI_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["nome", "marca", "confezionato", "piatto", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g"],
+        required: ["nome", "marca", "confezionato", "piatto", "pasto", "pezzi", "grammi_a_pezzo", "grammi", "kcal_100g", "proteine_100g", "carboidrati_100g", "grassi_100g", "fibre_100g", "zuccheri_100g", "sale_100g"],
         properties: {
           nome: { type: "string", description: "Nome breve dell'alimento in italiano" },
           marca: { type: "string", description: "Marca del prodotto confezionato (es. 'Ferrero', 'Mulino Bianco'); stringa vuota per alimenti freschi/sfusi o piatti di ristorante" },
@@ -1396,6 +1471,9 @@ const AI_SCHEMA = {
           proteine_100g: { type: "number" },
           carboidrati_100g: { type: "number" },
           grassi_100g: { type: "number" },
+          fibre_100g: { type: "number" },
+          zuccheri_100g: { type: "number" },
+          sale_100g: { type: "number", description: "Sale in g per 100 g (sodio × 2,5)" },
         },
       },
     },
@@ -1448,6 +1526,9 @@ async function aiParseFoodText(text) {
           p: Math.max(0, a.proteine_100g),
           c: Math.max(0, a.carboidrati_100g),
           f: Math.max(0, a.grassi_100g),
+          fib: a.fibre_100g != null ? Math.max(0, a.fibre_100g) : null,
+          sug: a.zuccheri_100g != null ? Math.max(0, a.zuccheri_100g) : null,
+          salt: a.sale_100g != null ? Math.max(0, a.sale_100g) : null,
         },
       },
     };
@@ -1501,6 +1582,75 @@ async function lookupBrandProduct(name, brand) {
   const p = best.prod;
   const label = [p.productName, p.brand].filter(Boolean).join(" · ");
   return { name: label, per100: p.per100, portion: p.portion };
+}
+
+const AI_MENU_SYSTEM = `Sei un nutrizionista italiano al ristorante con un cliente. Ricevi la
+foto di un menu e i macro che gli restano oggi. Leggi il menu e scegli i 3 piatti REALI del
+menu più in linea con quei macro (proteine prima di tutto, poi budget kcal). Per ognuno:
+nome esatto dal menu, kcal stimate della porzione, una riga sul perché. Sii concreto.`;
+
+const AI_MENU_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["consigli"],
+  properties: {
+    consigli: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["piatto", "kcal", "perche"],
+        properties: {
+          piatto: { type: "string" },
+          kcal: { type: "number" },
+          perche: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+function fileToB64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function analyzeMenuPhoto(file) {
+  if (!state.apiKey) { toast("Il menu fotografato richiede la modalità IA"); return; }
+  openVoiceModal();
+  $("#voiceParsed").innerHTML = `<p class="hint">🍴 Leggo il menu e confronto coi tuoi macro…</p>`;
+  try {
+    const rem = remaining(dayTotals(todayKey()));
+    const data = await fileToB64(file);
+    const out = await aiComplete({
+      system: AI_MENU_SYSTEM,
+      schema: AI_MENU_SCHEMA,
+      maxTokens: 1500,
+      effort: "high",
+      blocks: [
+        { type: "image", media_type: file.type || "image/jpeg", data },
+        { type: "text", text: `Macro rimanenti oggi: ${r0(rem.kcal)} kcal, proteine ${r0(rem.p)} g, carboidrati ${r0(rem.c)} g, grassi ${r0(rem.f)} g.` },
+      ],
+    });
+    const list = out.consigli || [];
+    $("#voiceParsed").innerHTML = list.length
+      ? `<p class="gsection">🍴 Dal menu, per i tuoi macro di oggi:</p>` + list.map((c) => `
+          <div class="vp-row">
+            <span class="vp-emoji">🍽️</span>
+            <div class="vp-info">
+              <div class="vp-name">${esc(c.piatto)}</div>
+              <div class="vp-detail">~${r0(c.kcal)} kcal · ${esc(c.perche)}</div>
+            </div>
+          </div>`).join("") +
+        `<p class="hint">Quando hai ordinato, detta o scrivi cosa hai preso e lo aggiungo al diario.</p>`
+      : `<p class="hint">Non ho letto piatti nel menu: riprova con una foto più nitida.</p>`;
+  } catch (err) {
+    $("#voiceParsed").innerHTML = `<p class="vp-error">⚠️ ${esc(err.message)}</p>`;
+  }
 }
 
 function renderAiBox() {
@@ -1914,6 +2064,9 @@ function updateGoalsCheck() {
 
 function openGoalsModal() {
   const isFirstRun = !state.goals;
+  const prof = profilesInfo();
+  $("#profileSel").innerHTML = prof.list.map((n) =>
+    `<option value="${esc(n)}" ${n === prof.active ? "selected" : ""}>${esc(n)}</option>`).join("");
   $("#goalsClose").classList.toggle("hidden", isFirstRun);
   // il backup ha senso solo quando c'è già qualcosa da salvare
   $("#backupBox").classList.toggle("hidden", isFirstRun);
@@ -2412,6 +2565,12 @@ function coachPromptText(input) {
     const first = wDates[0], lastW = wDates[wDates.length - 1];
     lines.push(`Peso registrato nell'app: da ${state.weights[first]} kg (${first}) a ${state.weights[lastW]} kg (${lastW}) — usa questo trend REALE per giudicare se le calorie attuali funzionano davvero`);
   }
+  let hungry = 0, moodDays = 0;
+  for (let i = 0; i < 7; i++) {
+    const v = state.mood[todayKey(-i)];
+    if (v) { moodDays++; if (v === 3) hungry++; }
+  }
+  if (moodDays) lines.push(`Fame serale registrata: ${hungry} ser${hungry === 1 ? "a" : "e"} su ${moodDays} con molta fame — se ricorrente, valuta di spostare carboidrati/volume verso cena.`);
   const mt = measuredTDEE();
   if (mt) {
     lines.push(`MANTENIMENTO MISURATO dall'app (kcal medie mangiate ${mt.avg} vs variazione peso, ${mt.tracked} giorni tracciati su ${mt.days}): ~${mt.tdee} kcal/giorno. Questo numero è misurato sul corpo reale: vale più di qualsiasi formula e anche delle ancore vecchie se in contrasto. Parti da qui per i macro.`);
@@ -2687,6 +2846,11 @@ function localCoachView(input, files) {
       cons.kcalMaintain ? `mantenimento ${cons.kcalMaintain} kcal` : "",
     ].filter(Boolean).join(", ");
     extras.push({ level: "ok", text: `📎 Nelle note riporti calorie già usate nel tuo percorso (${nums}): sono <strong>dati reali sul tuo corpo</strong> e valgono più di qualsiasi formula, quindi ho ancorato i macro consigliati a quei numeri e non al calcolo teorico.` });
+  }
+  {
+    let hungry = 0;
+    for (let i = 0; i < 7; i++) if (state.mood[todayKey(-i)] === 3) hungry++;
+    if (hungry >= 3) extras.push({ level: "warn", text: `😫 Hai segnato molta fame serale ${hungry} sere negli ultimi 7 giorni: sposta 30-50 g di carboidrati (o più volume: verdure, patate) verso la cena — stesse calorie, più sazietà quando ti serve.` });
   }
   if (targets.measured) {
     const m = measuredTDEE();
@@ -2969,6 +3133,68 @@ function renderWeek() {
   $("#weekHint").textContent = logged
     ? `Media ${r0(kcalSum / logged)} kcal nei ${logged} giorni registrati · obiettivo ${r0(activeGoals(todayKey()).kcal)} · in linea = ±10%. La riga tratteggiata è l'obiettivo.`
     : "Registra i pasti e qui vedrai l'andamento della settimana.";
+
+  // Banca calorie della settimana (da lunedì): risparmi oggi, spendi sabato
+  const dow = (new Date(todayKey()).getDay() + 6) % 7; // 0 = lunedì
+  let saldo = 0, counted = 0;
+  for (let i = dow; i >= 0; i--) {
+    const key = todayKey(-i);
+    const k = dayTotals(key).kcal;
+    if (k > 0) { saldo += activeGoals(key).kcal - k; counted++; }
+  }
+  $("#weekBank").textContent = counted
+    ? (saldo >= 0
+      ? `🏦 Banca settimana: +${r0(saldo)} kcal di margine accumulato da lunedì — copre uno sgarro da altrettanto.`
+      : `🏦 Banca settimana: ${r0(saldo)} kcal — recuperabili spalmandoli sui giorni che restano.`)
+    : "";
+
+  // Fame serale del giorno visualizzato
+  const mood = state.mood[viewDate];
+  $("#moodRow").innerHTML = `<span class="hint">Fame stasera:</span>` +
+    [["1", "😌"], ["2", "😐"], ["3", "😫"]].map(([v, e]) =>
+      `<button class="mood-btn${mood === Number(v) ? " active" : ""}" data-mood="${v}">${e}</button>`).join("");
+  $$(".mood-btn").forEach((b) => b.addEventListener("click", () => {
+    const v = Number(b.dataset.mood);
+    if (state.mood[viewDate] === v) delete state.mood[viewDate];
+    else state.mood[viewDate] = v;
+    saveState();
+    renderWeek();
+  }));
+}
+
+/* ---------- Integratori ---------- */
+
+let suppEditMode = false;
+
+function renderSupps() {
+  const taken = state.supps.taken[viewDate] || {};
+  $("#suppChips").innerHTML = state.supps.list.length
+    ? state.supps.list.map((name) => `
+        <button class="supp-chip${taken[name] ? " taken" : ""}" data-supp="${esc(name)}">
+          ${taken[name] ? "✓ " : ""}${esc(name)}${suppEditMode ? " ✕" : ""}
+        </button>`).join("")
+    : `<p class="hint">Aggiungi i tuoi integratori (creatina, omega-3…) e spuntali ogni giorno con un tap.</p>`;
+  $$("[data-supp]").forEach((b) => b.addEventListener("click", () => {
+    const name = b.dataset.supp;
+    if (suppEditMode) {
+      state.supps.list = state.supps.list.filter((n) => n !== name);
+    } else {
+      if (!state.supps.taken[viewDate]) state.supps.taken[viewDate] = {};
+      if (state.supps.taken[viewDate][name]) delete state.supps.taken[viewDate][name];
+      else state.supps.taken[viewDate][name] = true;
+    }
+    saveState();
+    renderSupps();
+  }));
+}
+
+function addSupp() {
+  const name = $("#suppInput").value.trim();
+  if (!name) return;
+  if (!state.supps.list.includes(name)) state.supps.list.push(name);
+  $("#suppInput").value = "";
+  saveState();
+  renderSupps();
 }
 
 /* ---------- Peso corporeo ---------- */
@@ -3123,7 +3349,33 @@ function renderTraining() {
     }
   }
 
-  $("#trainingBody").innerHTML = rows + weekHtml;
+  // Progressione: carico massimo per esercizio nel tempo (dati già registrati)
+  const hist = {};
+  for (const [date, list] of Object.entries(state.workouts)) {
+    for (const w of list) for (const ex of w.exercises || []) {
+      if (!(ex.kg > 0)) continue;
+      const k = ex.name.toLowerCase().trim();
+      (hist[k] = hist[k] || []).push({ date, kg: ex.kg, name: ex.name });
+    }
+  }
+  const prog = Object.values(hist)
+    .map((a) => a.sort((x, y) => (x.date < y.date ? -1 : 1)))
+    .filter((a) => a.length >= 2)
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 3);
+  const progHtml = prog.length
+    ? `<p class="gsection">📈 Progressione</p>` + prog.map((a) => {
+        const d = a[a.length - 1].kg - a[0].kg;
+        return `
+          <div class="prog-row">
+            <span class="prog-name">${esc(a[a.length - 1].name)}</span>
+            <svg class="prog-spark" viewBox="0 0 120 36" width="90" height="27">${sparklineSvg(a.map((x) => x.kg))}</svg>
+            <span class="prog-delta">${a[0].kg}→${a[a.length - 1].kg} kg${d ? ` (${d > 0 ? "+" : ""}${Math.round(d * 10) / 10})` : ""}</span>
+          </div>`;
+      }).join("")
+    : "";
+
+  $("#trainingBody").innerHTML = rows + weekHtml + progHtml;
   $$(".wk-row").forEach((r) =>
     r.addEventListener("click", () => openWorkoutModal(r.dataset.workout))
   );
@@ -3292,6 +3544,30 @@ function init() {
   $("#importFile").addEventListener("change", (e) => {
     if (e.target.files[0]) importData(e.target.files[0]);
     e.target.value = ""; // permette di reimportare lo stesso file
+  });
+
+  // Menu del ristorante (foto)
+  $("#menuBtn").addEventListener("click", () => $("#menuFile").click());
+  $("#menuFile").addEventListener("change", (e) => {
+    if (e.target.files[0]) analyzeMenuPhoto(e.target.files[0]);
+    e.target.value = "";
+  });
+
+  // Integratori
+  $("#suppEdit").addEventListener("click", () => {
+    suppEditMode = !suppEditMode;
+    $("#suppEdit").textContent = suppEditMode ? "Fine" : "Modifica";
+    $("#suppAddRow").classList.toggle("hidden", !suppEditMode);
+    renderSupps();
+  });
+  $("#suppAdd").addEventListener("click", addSupp);
+  $("#suppInput").addEventListener("keydown", (e) => { if (e.key === "Enter") addSupp(); });
+
+  // Profili
+  $("#profileSel").addEventListener("change", (e) => switchProfile(e.target.value));
+  $("#profileAdd").addEventListener("click", () => {
+    const name = (window.prompt("Nome del nuovo profilo (es. Marco):") || "").trim();
+    if (name) { switchProfile(name); openGoalsModal(); }
   });
 
   // Peso
