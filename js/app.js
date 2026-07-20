@@ -2066,6 +2066,16 @@ function coachTargets(input, cons = null) {
     }
   }
 
+  // Senza ancore esplicite: il TDEE misurato dall'app batte le formule
+  let measured = false;
+  if (!anchored) {
+    const m = measuredTDEE();
+    if (m) {
+      kcal = Math.round(m.tdee * { cut: 0.85, maintain: 1.0, bulk: 1.08, recomp: 0.95 }[goal] / 10) * 10;
+      measured = true;
+    }
+  }
+
   const protPerKg = { cut: 2.0, maintain: 1.6, bulk: 1.8, recomp: 2.2 }[goal];
   const p = Math.round(weight * protPerKg);
   const f = Math.round(Math.max(0.7 * weight, kcal * 0.27 / 9));
@@ -2083,7 +2093,7 @@ function coachTargets(input, cons = null) {
       rest.kcal = cutRest;
     }
   }
-  return { bmr: Math.round(bmr), tdee: Math.round(tdee), rest, train, anchored };
+  return { bmr: Math.round(bmr), tdee: Math.round(tdee), rest, train, anchored, measured };
 }
 
 /* Analisi locale dei gruppi muscolari dal testo dell'allenamento */
@@ -2402,6 +2412,10 @@ function coachPromptText(input) {
     const first = wDates[0], lastW = wDates[wDates.length - 1];
     lines.push(`Peso registrato nell'app: da ${state.weights[first]} kg (${first}) a ${state.weights[lastW]} kg (${lastW}) — usa questo trend REALE per giudicare se le calorie attuali funzionano davvero`);
   }
+  const mt = measuredTDEE();
+  if (mt) {
+    lines.push(`MANTENIMENTO MISURATO dall'app (kcal medie mangiate ${mt.avg} vs variazione peso, ${mt.tracked} giorni tracciati su ${mt.days}): ~${mt.tdee} kcal/giorno. Questo numero è misurato sul corpo reale: vale più di qualsiasi formula e anche delle ancore vecchie se in contrasto. Parti da qui per i macro.`);
+  }
   return lines.join("\n");
 }
 
@@ -2673,6 +2687,10 @@ function localCoachView(input, files) {
       cons.kcalMaintain ? `mantenimento ${cons.kcalMaintain} kcal` : "",
     ].filter(Boolean).join(", ");
     extras.push({ level: "ok", text: `📎 Nelle note riporti calorie già usate nel tuo percorso (${nums}): sono <strong>dati reali sul tuo corpo</strong> e valgono più di qualsiasi formula, quindi ho ancorato i macro consigliati a quei numeri e non al calcolo teorico.` });
+  }
+  if (targets.measured) {
+    const m = measuredTDEE();
+    extras.push({ level: "ok", text: `🧬 Ho il tuo <strong>mantenimento misurato</strong> dai dati dell'app (~${m.tdee} kcal/giorno da ${m.tracked} giorni di diario + peso): i macro consigliati partono da lì, non dalle formule teoriche.` });
   }
 
   if (cons.kcalFloor) {
@@ -2955,6 +2973,29 @@ function renderWeek() {
 
 /* ---------- Peso corporeo ---------- */
 
+/** TDEE misurato: kcal medie mangiate − energia del peso perso/preso (7700 kcal/kg).
+    Serve una finestra vera: pesate a ≥10 giorni di distanza (ultimi 21) e
+    almeno il 60% dei giorni col diario compilato. Più affidabile di ogni formula. */
+function measuredTDEE() {
+  const cutoff = todayKey(-21);
+  const win = Object.keys(state.weights).sort().filter((d) => d >= cutoff);
+  if (win.length < 2) return null;
+  const first = win[0], last = win[win.length - 1];
+  const span = Math.round((new Date(last) - new Date(first)) / 86400000);
+  if (span < 10) return null;
+  let sum = 0, n = 0;
+  const [y, m, d0] = first.split("-").map(Number);
+  for (let i = 0; i <= span; i++) {
+    const k = dayTotals(dateToKey(new Date(y, m - 1, d0 + i))).kcal;
+    if (k > 500) { sum += k; n++; } // conta solo i giorni tracciati davvero
+  }
+  if (n < Math.max(7, Math.ceil(span * 0.6))) return null;
+  const avg = sum / n;
+  const tdee = avg - ((state.weights[last] - state.weights[first]) * 7700) / span;
+  if (!(tdee > 1000 && tdee < 5000)) return null;
+  return { tdee: Math.round(tdee / 10) * 10, days: span, tracked: n, avg: Math.round(avg) };
+}
+
 /** Sparkline SVG degli ultimi valori: linea + area + punto finale (hue di sistema) */
 function sparklineSvg(values, w = 120, h = 36) {
   if (values.length < 2) return "";
@@ -3014,6 +3055,14 @@ function renderWeight() {
   }
   $("#weightHint").textContent = projection ||
     (viewDate === todayKey() && !state.weights[viewDate] ? "Non hai ancora registrato il peso di oggi." : "");
+
+  // Metabolismo misurato sui tuoi dati (non stimato con formule)
+  const m = measuredTDEE();
+  const g = state.goals;
+  $("#tdeeLine").textContent = m
+    ? `🧬 Mantenimento misurato sul tuo corpo: ~${m.tdee} kcal/giorno (${m.tracked} giorni tracciati su ${m.days})` +
+      (g ? ` — obiettivo attuale: ${g.kcal}.` : ".")
+    : "🧬 Traccia pasti e peso per ~2 settimane e qui comparirà il tuo mantenimento MISURATO, non stimato.";
 }
 
 function saveWeight() {

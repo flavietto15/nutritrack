@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
   <title>NutriTrack — Diario calorie e macro</title>
-  <link rel="stylesheet" href="css/style.css?v=17">
+  <link rel="stylesheet" href="css/style.css?v=18">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -124,6 +124,7 @@
         <button class="btn" id="weightSave">Registra</button>
       </div>
       <p class="hint" id="weightHint"></p>
+      <p class="hint tdee-line" id="tdeeLine"></p>
     </section>
 
     <!-- Storico settimanale -->
@@ -519,12 +520,12 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/vendor/motion.js?v=17"></script>
-  <script src="js/foods.js?v=17"></script>
-  <script src="js/app.js?v=17"></script>
+  <script src="js/vendor/motion.js?v=18"></script>
+  <script src="js/foods.js?v=18"></script>
+  <script src="js/app.js?v=18"></script>
   <script>
     // App installabile + offline; la ?v= tiene il service worker in passo con gli asset
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=17");
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=18");
   </script>
 </body>
 </html>

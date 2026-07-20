@@ -70,6 +70,24 @@ module.exports = async function ({ browser, baseURL }) {
     const proj = await page.textContent("#weightHint");
     assert(proj.includes("A questo ritmo"), "proiezione peso mostrata: " + proj);
 
+    // --- TDEE misurato: 14 giorni a 2000 kcal con −1 kg → ~2550 ---
+    const tdee = await page.evaluate(() => {
+      state.days = {}; state.weights = {};
+      for (let i = 0; i <= 14; i++) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        state.days[dateToKey(d)] = [{ id: "t" + i, meal: "pranzo", name: "Pasto", grams: 100, per100: { kcal: 2000, p: 0, c: 0, f: 0 } }];
+      }
+      const d14 = new Date(); d14.setDate(d14.getDate() - 14);
+      state.weights[dateToKey(d14)] = 76.4;
+      state.weights[todayKey()] = 75.4;
+      saveState(); render();
+      return measuredTDEE();
+    });
+    assert(tdee && tdee.tdee === 2550, "TDEE misurato = 2550 (2000 + 7700/14): " + JSON.stringify(tdee));
+    assert((await page.textContent("#tdeeLine")).includes("2550"), "la card Peso mostra il mantenimento misurato");
+    const coachBase = await page.evaluate(() => coachTargets({ sex: "m", age: 30, weight: 75, height: 175, bf: null, goal: "maintain", type: "pesi", sessions: 3, minutes: 60 }, parseCoachNotes("")));
+    assert(coachBase.measured && coachBase.rest.kcal === 2550, "il coach àncora al TDEE misurato: " + coachBase.rest.kcal);
+
     // --- Il backup ora include peso e allenamenti ---
     const payload = await page.evaluate(() => backupPayload().data);
     assert(payload.weights && payload.workouts, "backup con weights e workouts");

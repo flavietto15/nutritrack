@@ -411,6 +411,7 @@ body {
 .spark-area { fill: var(--kcal); opacity: 0.12; }
 .spark-dot { fill: var(--kcal); }
 .meal-repeat { padding: 6px 0 0; font-size: 12.5px; }
+.tdee-line { margin-top: 4px; padding-top: 8px; border-top: 1px dashed var(--line); }
 
 /* ===== Storico settimanale ===== */
 .week-bars {
